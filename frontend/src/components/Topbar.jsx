@@ -22,6 +22,7 @@ const PAGE_TITLES = {
   '/docs': 'Documentation',
   '/threats': 'Threat Detection',
   '/pricing': 'Subscription Plans',
+  '/support': 'Support Center',
 };
 
 export default function Topbar({ account, provider, onAccountChange, accounts }) {
