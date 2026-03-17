@@ -24,6 +24,10 @@ const CAT_LABELS = {
   data_exposure: { label: 'Data Exposure', icon: Database, color: '#ef4444' },
   identity_threat: { label: 'Identity Threat', icon: Lock, color: '#a78bfa' },
   detection_gap: { label: 'Detection Gap', icon: Shield, color: '#facc15' },
+  secret_exposure: { label: 'Secret Exposure', icon: Lock, color: '#f43f5e' },
+  encryption_gap: { label: 'Encryption Gap', icon: Lock, color: '#fb923c' },
+  lateral_movement: { label: 'Lateral Movement', icon: Activity, color: '#c084fc' },
+  compliance_drift: { label: 'Compliance Drift', icon: AlertTriangle, color: '#38bdf8' },
 };
 
 const CHART_TOOLTIP = {
@@ -207,6 +211,77 @@ export default function Threats() {
           ) : <div className="h-48 flex items-center justify-center text-text-muted text-sm">No categories</div>}
         </Card>
       </div>
+
+      {/* Attack Paths */}
+      {data.attack_paths && data.attack_paths.length > 0 && (
+        <div>
+          <div className="section-title mb-4"><Target className="w-4 h-4 text-rose-400" /><span>Attack Path Analysis</span></div>
+          <div className="space-y-3">
+            {data.attack_paths.map((path, pi) => (
+              <Card key={pi} delay={0.1 + pi * 0.04} hover={false} className="!p-0 overflow-hidden">
+                <div className="px-5 py-4 border-b border-border/20">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-rose-500/12 border border-rose-500/15 flex items-center justify-center">
+                        <Crosshair className="w-4 h-4 text-rose-400" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-semibold text-text">{path.name}</h3>
+                        <p className="text-[10px] text-text-muted mt-0.5">{path.description}</p>
+                      </div>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-lg text-[9px] font-bold uppercase tracking-widest border"
+                      style={{ color: SEV_COLORS[path.severity], borderColor: `${SEV_COLORS[path.severity]}25`, background: `${SEV_COLORS[path.severity]}10` }}>
+                      {path.severity}
+                    </span>
+                  </div>
+                </div>
+                {/* Steps visualization */}
+                <div className="px-5 py-4">
+                  <div className="flex items-stretch gap-0 overflow-x-auto pb-2">
+                    {path.steps.map((step, si) => {
+                      const stepColors = { recon: '#60a5fa', exploit: '#fb7185', access: '#f97316', escalate: '#c084fc', exfiltrate: '#ef4444', persist: '#facc15' };
+                      const color = stepColors[step.type] || '#94a3b8';
+                      return (
+                        <div key={si} className="flex items-center flex-shrink-0">
+                          <div className="w-44 rounded-xl border border-border/30 p-3" style={{ borderLeftColor: color, borderLeftWidth: '3px' }}>
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <span className="w-5 h-5 rounded-md flex items-center justify-center text-[9px] font-bold" style={{ background: `${color}15`, color }}>{step.step}</span>
+                              <span className="text-[9px] font-bold uppercase tracking-widest" style={{ color }}>{step.type}</span>
+                            </div>
+                            <p className="text-xs font-medium text-text">{step.action}</p>
+                            <p className="text-[10px] text-text-muted mt-0.5">{step.detail}</p>
+                          </div>
+                          {si < path.steps.length - 1 && (
+                            <div className="flex items-center px-1.5 flex-shrink-0">
+                              <ChevronRight className="w-4 h-4 text-text-muted/30" />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {/* MITRE Chain + Impact */}
+                  <div className="mt-3 flex items-start gap-4">
+                    <div className="flex-1">
+                      <p className="text-[9px] text-text-muted uppercase tracking-wider font-bold mb-1.5">MITRE ATT&CK Chain</p>
+                      <div className="flex flex-wrap gap-1">
+                        {path.mitre_chain?.map((t, ti) => (
+                          <span key={ti} className="px-2 py-0.5 rounded-md bg-primary/8 text-primary-light text-[9px] font-mono border border-primary/10">{t}</span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-[9px] text-text-muted uppercase tracking-wider font-bold mb-1.5">Impact</p>
+                      <p className="text-[10px] text-rose-400 leading-relaxed">{path.impact}</p>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Threat Feed */}
       <div>

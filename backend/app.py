@@ -1001,6 +1001,237 @@ def _detect_threats(account_name: str) -> dict:
             "remediation": "Enable CloudTrail in all regions with log file validation.",
         })
 
+    # ── Advanced: Secret Detection in Lambda env vars ──
+    for region in regions:
+        lambdas = _read_json(acct_dir / region / "lambda-list-functions.json")
+        for fn in lambdas.get("Functions", []):
+            env_vars = fn.get("Environment", {}).get("Variables", {})
+            secret_patterns = ["KEY", "SECRET", "PASSWORD", "TOKEN", "CREDENTIAL", "API_KEY", "AUTH", "PRIVATE"]
+            for key, val in env_vars.items():
+                if any(p in key.upper() for p in secret_patterns) and len(val) > 8:
+                    threat_id += 1
+                    threats.append({
+                        "id": f"TH-{threat_id:04d}", "severity": "CRITICAL",
+                        "category": "secret_exposure",
+                        "title": f"Potential secret in Lambda env var: {key}",
+                        "description": f"Lambda function {fn.get('FunctionName', '')} has environment variable '{key}' that may contain a secret/credential",
+                        "resource": fn.get("FunctionName", ""), "resource_type": "Lambda",
+                        "region": region, "detected_at": datetime.now().isoformat(), "status": "active",
+                        "mitre_tactic": "Credential Access",
+                        "mitre_technique": "T1552.001 - Credentials In Files",
+                        "remediation": f"Move secret '{key}' to AWS Secrets Manager or Parameter Store. Reference it at runtime instead of embedding.",
+                    })
+
+    # ── Advanced: S3 Data Exposure ──
+    for region in regions[:1]:  # S3 is global
+        s3 = _read_json(acct_dir / region / "s3-list-buckets.json")
+        bucket_count = len(s3.get("Buckets", []))
+        if bucket_count > 0:
+            threat_id += 1
+            threats.append({
+                "id": f"TH-{threat_id:04d}", "severity": "MEDIUM",
+                "category": "data_exposure",
+                "title": f"{bucket_count} S3 buckets require public access review",
+                "description": f"Review all {bucket_count} S3 buckets for public access settings. Enable S3 Block Public Access at account level.",
+                "resource": f"{bucket_count} buckets", "resource_type": "S3",
+                "region": "global", "detected_at": datetime.now().isoformat(), "status": "active",
+                "mitre_tactic": "Collection",
+                "mitre_technique": "T1530 - Data from Cloud Storage",
+                "remediation": "Enable S3 Block Public Access at account level: aws s3control put-public-access-block --account-id <ID> --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true",
+            })
+
+    # ── Advanced: Encryption Audit ──
+    for region in regions:
+        # Unencrypted snapshots
+        snaps = _read_json(acct_dir / region / "ec2-describe-snapshots.json")
+        unenc_snaps = [s for s in snaps.get("Snapshots", []) if not s.get("Encrypted")]
+        if unenc_snaps:
+            threat_id += 1
+            threats.append({
+                "id": f"TH-{threat_id:04d}", "severity": "HIGH",
+                "category": "encryption_gap",
+                "title": f"{len(unenc_snaps)} unencrypted EBS snapshots in {region}",
+                "description": f"Found {len(unenc_snaps)} snapshots without encryption: {', '.join(s.get('SnapshotId','') for s in unenc_snaps[:5])}",
+                "resource": f"{len(unenc_snaps)} snapshots", "resource_type": "Snapshot",
+                "region": region, "detected_at": datetime.now().isoformat(), "status": "active",
+                "mitre_tactic": "Collection",
+                "mitre_technique": "T1530 - Data from Cloud Storage",
+                "remediation": "Copy snapshots with encryption enabled. Enable EBS encryption by default for the account.",
+            })
+
+        # Unencrypted RDS
+        rds = _read_json(acct_dir / region / "rds-describe-db-instances.json")
+        for db in rds.get("DBInstances", []):
+            if not db.get("StorageEncrypted"):
+                threat_id += 1
+                threats.append({
+                    "id": f"TH-{threat_id:04d}", "severity": "HIGH",
+                    "category": "encryption_gap",
+                    "title": f"RDS instance without encryption: {db.get('DBInstanceIdentifier', '')}",
+                    "description": f"Database {db.get('DBInstanceIdentifier', '')} ({db.get('Engine', '')}) does not have storage encryption enabled",
+                    "resource": db.get("DBInstanceIdentifier", ""), "resource_type": "RDS",
+                    "region": region, "detected_at": datetime.now().isoformat(), "status": "active",
+                    "mitre_tactic": "Collection",
+                    "mitre_technique": "T1565 - Data Manipulation",
+                    "remediation": "Encrypt RDS: Create encrypted snapshot → Restore from snapshot → Switch DNS/endpoint.",
+                })
+
+    # ── Advanced: Lateral Movement - Overly permissive IAM ──
+    for region in regions[:1]:
+        iam_auth = _read_json(acct_dir / region / "iam-get-account-authorization-details.json")
+        for role in iam_auth.get("RoleDetailList", []):
+            trust = role.get("AssumeRolePolicyDocument", {})
+            if isinstance(trust, str):
+                try:
+                    trust = json.loads(trust)
+                except Exception:
+                    continue
+            for stmt in trust.get("Statement", []):
+                principal = stmt.get("Principal", {})
+                if isinstance(principal, str) and principal == "*":
+                    threat_id += 1
+                    threats.append({
+                        "id": f"TH-{threat_id:04d}", "severity": "CRITICAL",
+                        "category": "lateral_movement",
+                        "title": f"IAM role assumable by anyone: {role.get('RoleName', '')}",
+                        "description": f"Role {role.get('RoleName', '')} has trust policy with Principal: '*', allowing any AWS account to assume it",
+                        "resource": role.get("RoleName", ""), "resource_type": "IAM Role",
+                        "region": "global", "detected_at": datetime.now().isoformat(), "status": "active",
+                        "mitre_tactic": "Lateral Movement",
+                        "mitre_technique": "T1550.001 - Application Access Token",
+                        "remediation": f"Restrict trust policy for role {role.get('RoleName', '')} to specific account IDs or services.",
+                    })
+
+            # Check for admin policies
+            for policy in role.get("AttachedManagedPolicies", []):
+                if "AdministratorAccess" in policy.get("PolicyName", ""):
+                    threat_id += 1
+                    threats.append({
+                        "id": f"TH-{threat_id:04d}", "severity": "HIGH",
+                        "category": "lateral_movement",
+                        "title": f"Role with full admin access: {role.get('RoleName', '')}",
+                        "description": f"Role {role.get('RoleName', '')} has AdministratorAccess policy attached — full control over all resources",
+                        "resource": role.get("RoleName", ""), "resource_type": "IAM Role",
+                        "region": "global", "detected_at": datetime.now().isoformat(), "status": "active",
+                        "mitre_tactic": "Privilege Escalation",
+                        "mitre_technique": "T1078.004 - Cloud Accounts",
+                        "remediation": "Apply least-privilege principle. Replace AdministratorAccess with specific service policies.",
+                    })
+
+    # ── Advanced: Compliance Drift ──
+    try:
+        latest_compliance = _compliance_store.get_latest(account_name)
+        history = _compliance_store.get_history(account_name)
+        if latest_compliance and len(history) >= 2:
+            current_score = latest_compliance.get("summary", {}).get("overall_score", 0)
+            prev_score = history[1].get("overall_score", 0)  # index 0 is latest, 1 is previous
+            if current_score < prev_score:
+                drift = prev_score - current_score
+                threat_id += 1
+                threats.append({
+                    "id": f"TH-{threat_id:04d}", "severity": "HIGH" if drift > 10 else "MEDIUM",
+                    "category": "compliance_drift",
+                    "title": f"Compliance score dropped {drift}% (from {prev_score}% to {current_score}%)",
+                    "description": f"Overall compliance score decreased by {drift} percentage points since the previous scan. This indicates new misconfigurations or policy violations.",
+                    "resource": "compliance", "resource_type": "Compliance",
+                    "region": "global", "detected_at": datetime.now().isoformat(), "status": "active",
+                    "mitre_tactic": "Defense Evasion",
+                    "mitre_technique": "T1562 - Impair Defenses",
+                    "remediation": f"Review compliance results at /compliance. Focus on newly failed checks to restore score from {current_score}% to {prev_score}%+.",
+                })
+    except Exception:
+        pass
+
+    # ── Build Attack Paths ──
+    attack_paths = []
+
+    # Path 1: Internet → Open Port → EC2 → IAM Role → Data
+    public_instances = [t for t in threats if t["category"] == "public_exposure"]
+    open_ports = [t for t in threats if t["category"] == "network_exposure"]
+    data_exposure = [t for t in threats if t["category"] == "data_exposure"]
+    identity_threats = [t for t in threats if t["category"] == "identity_threat"]
+
+    if open_ports and public_instances:
+        attack_paths.append({
+            "id": "AP-001",
+            "name": "Internet → EC2 via Open Ports",
+            "severity": "CRITICAL",
+            "description": "Attacker can reach EC2 instances through open security group rules and public IPs",
+            "steps": [
+                {"step": 1, "action": "Scan public IPs", "detail": f"{len(public_instances)} instance(s) with public IPs", "type": "recon"},
+                {"step": 2, "action": "Exploit open port", "detail": f"{len(open_ports)} open port rule(s) to 0.0.0.0/0", "type": "exploit"},
+                {"step": 3, "action": "Gain instance access", "detail": "SSH/RDP access via open ports", "type": "access"},
+                {"step": 4, "action": "Steal IAM credentials", "detail": "Query instance metadata for IAM role credentials", "type": "escalate"},
+            ],
+            "impact": "Full instance compromise, potential lateral movement via IAM role",
+            "mitre_chain": ["T1595 - Active Scanning", "T1190 - Exploit Public-Facing App", "T1078 - Valid Accounts", "T1552 - Unsecured Credentials"],
+        })
+
+    if data_exposure:
+        attack_paths.append({
+            "id": "AP-002",
+            "name": "Internet → Public Database → Data Exfiltration",
+            "severity": "CRITICAL",
+            "description": "Publicly accessible databases can be directly attacked from the internet",
+            "steps": [
+                {"step": 1, "action": "Discover public endpoint", "detail": f"{len(data_exposure)} public database(s)", "type": "recon"},
+                {"step": 2, "action": "Brute force credentials", "detail": "Default or weak database credentials", "type": "exploit"},
+                {"step": 3, "action": "Exfiltrate data", "detail": "Direct SQL access to all data", "type": "exfiltrate"},
+            ],
+            "impact": "Complete data breach — customer data, PII, financial records",
+            "mitre_chain": ["T1595 - Active Scanning", "T1110 - Brute Force", "T1530 - Data from Cloud Storage"],
+        })
+
+    if identity_threats:
+        attack_paths.append({
+            "id": "AP-003",
+            "name": "Credential Theft → Account Takeover",
+            "severity": "HIGH",
+            "description": "Weak identity controls allow account compromise through credential theft",
+            "steps": [
+                {"step": 1, "action": "Phish IAM user", "detail": f"{len([t for t in identity_threats if 'without MFA' in t.get('title','')])} users without MFA protection", "type": "recon"},
+                {"step": 2, "action": "Use stolen credentials", "detail": "No MFA = single-factor compromise", "type": "exploit"},
+                {"step": 3, "action": "Escalate privileges", "detail": "Access cloud console or API with stolen identity", "type": "escalate"},
+                {"step": 4, "action": "Persistent access", "detail": "Create backdoor IAM users or access keys", "type": "persist"},
+            ],
+            "impact": "Full account takeover, resource manipulation, data theft",
+            "mitre_chain": ["T1566 - Phishing", "T1078 - Valid Accounts", "T1098 - Account Manipulation"],
+        })
+
+    secret_threats = [t for t in threats if t["category"] == "secret_exposure"]
+    if secret_threats:
+        attack_paths.append({
+            "id": "AP-004",
+            "name": "Exposed Secrets → Service Compromise",
+            "severity": "CRITICAL",
+            "description": "Hardcoded secrets in Lambda functions can be extracted and used to access other services",
+            "steps": [
+                {"step": 1, "action": "Access Lambda config", "detail": f"{len(secret_threats)} functions with embedded secrets", "type": "recon"},
+                {"step": 2, "action": "Extract credentials", "detail": "Read environment variables via console or API", "type": "exploit"},
+                {"step": 3, "action": "Access target service", "detail": "Use extracted API keys/tokens for lateral movement", "type": "escalate"},
+            ],
+            "impact": "Compromise of connected services — databases, APIs, third-party systems",
+            "mitre_chain": ["T1552.001 - Credentials In Files", "T1550 - Use Alternate Auth Material"],
+        })
+
+    lateral = [t for t in threats if t["category"] == "lateral_movement"]
+    encryption = [t for t in threats if t["category"] == "encryption_gap"]
+
+    if lateral:
+        attack_paths.append({
+            "id": "AP-005",
+            "name": "Over-Privileged Role → Cross-Account Pivot",
+            "severity": "HIGH",
+            "description": "Overly permissive IAM roles can be assumed to pivot across the infrastructure",
+            "steps": [
+                {"step": 1, "action": "Discover assumable roles", "detail": f"{len(lateral)} roles with excessive permissions", "type": "recon"},
+                {"step": 2, "action": "Assume admin role", "detail": "Use sts:AssumeRole with wildcard trust", "type": "escalate"},
+                {"step": 3, "action": "Full infrastructure access", "detail": "Admin role grants control over all resources", "type": "access"},
+            ],
+            "impact": "Complete infrastructure compromise — create, modify, delete any resource",
+            "mitre_chain": ["T1078.004 - Cloud Accounts", "T1550.001 - Application Access Token"],
+        })
+
     # Sort by severity
     sev_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
     threats.sort(key=lambda t: sev_order.get(t["severity"], 5))
@@ -1008,31 +1239,38 @@ def _detect_threats(account_name: str) -> dict:
     # Summary
     sev_counts = {}
     cat_counts = {}
+    region_counts = {}
+    resource_type_counts = {}
     for t in threats:
         sev_counts[t["severity"]] = sev_counts.get(t["severity"], 0) + 1
         cat_counts[t["category"]] = cat_counts.get(t["category"], 0) + 1
+        region_counts[t["region"]] = region_counts.get(t["region"], 0) + 1
+        resource_type_counts[t["resource_type"]] = resource_type_counts.get(t["resource_type"], 0) + 1
 
     total = len(threats)
     crit = sev_counts.get("CRITICAL", 0)
     high = sev_counts.get("HIGH", 0)
-    risk_score = min(100, max(0, 100 - crit * 15 - high * 5 - sev_counts.get("MEDIUM", 0) * 2))
+    risk_score = min(100, max(0, 100 - crit * 12 - high * 4 - sev_counts.get("MEDIUM", 0) * 1))
 
     return {
         "account": account_name,
         "scanned_at": datetime.now().isoformat(),
         "threats": threats,
+        "attack_paths": attack_paths,
         "total": total,
         "risk_score": risk_score,
         "summary": {
             "severity": {s: sev_counts.get(s, 0) for s in ["CRITICAL", "HIGH", "MEDIUM", "LOW"]},
             "categories": cat_counts,
+            "regions": dict(sorted(region_counts.items(), key=lambda x: x[1], reverse=True)[:10]),
+            "resource_types": resource_type_counts,
         },
     }
 
 
 @app.get("/api/threats/{account_name}")
 def get_threats(account_name: str, user: dict = Depends(get_current_user)):
-    """Get real-time threat detection results."""
+    """Advanced threat detection with attack paths, secret scanning, encryption audit, and MITRE ATT&CK mapping."""
     result = _detect_threats(account_name)
     if not result["threats"] and result["risk_score"] == 0:
         raise HTTPException(404, f"No data for account '{account_name}'")
