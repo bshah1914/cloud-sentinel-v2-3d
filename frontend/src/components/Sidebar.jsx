@@ -4,7 +4,7 @@ import { clsx } from 'clsx';
 import {
   LayoutDashboard, Users, ShieldCheck, Server, KeyRound,
   ShieldAlert, ScanLine, Cloud, ChevronLeft, ChevronRight,
-  UserCog, Layers, Sparkles, FileText, ClipboardCheck, BookOpen
+  UserCog, Layers, Sparkles, FileText, ClipboardCheck, BookOpen, Crosshair
 } from 'lucide-react';
 
 const nav = [
@@ -16,6 +16,7 @@ const nav = [
   { to: '/resources', icon: Server, label: 'Resources', section: 'security' },
   { to: '/iam', icon: KeyRound, label: 'IAM', section: 'security' },
   { to: '/security-groups', icon: ShieldAlert, label: 'Security', section: 'security' },
+  { to: '/threats', icon: Crosshair, label: 'Threats', section: 'security' },
   { to: '/compliance', icon: ClipboardCheck, label: 'Compliance', section: 'compliance' },
   { to: '/report', icon: FileText, label: 'Report', section: 'report' },
   { to: '/docs', icon: BookOpen, label: 'Docs', section: 'report' },

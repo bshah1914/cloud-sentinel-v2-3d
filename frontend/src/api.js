@@ -140,6 +140,9 @@ export const aiChat = (message, history = []) =>
 // Well-Architected Framework
 export const getWafReport = (account) => request(`/waf/${account}`);
 
+// Threat Detection
+export const getThreats = (account) => request(`/threats/${account}`);
+
 // Compliance Module
 export const getComplianceFrameworks = () => request('/compliance/frameworks');
 export const getComplianceFramework = (id) => request(`/compliance/frameworks/${id}`);

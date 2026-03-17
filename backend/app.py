@@ -789,6 +789,256 @@ def export_audit(account_name: str, format: str = "pdf",
                         headers={"Content-Disposition": f'attachment; filename="audit-{account_name}.pdf"'})
 
 
+# ── THREAT DETECTION ─────────────────────────────────────────────
+
+def _detect_threats(account_name: str) -> dict:
+    """Analyze cloud data for real-time threats and anomalies."""
+    from providers.aws.parser import _read_json, _get_regions
+
+    threats = []
+    threat_id = 0
+
+    # Find account data dir
+    acct_dir = ACCOUNT_DATA_DIR / "aws" / account_name
+    if not acct_dir.exists():
+        acct_dir = ACCOUNT_DATA_DIR / account_name
+    if not acct_dir.exists():
+        return {"threats": [], "summary": {}, "risk_score": 0}
+
+    regions = _get_regions(acct_dir)
+
+    for region in regions:
+        region_dir = acct_dir / region
+
+        # ── Threat: Open ports to internet ──
+        sgs = _read_json(region_dir / "ec2-describe-security-groups.json")
+        for sg in sgs.get("SecurityGroups", []):
+            for rule in sg.get("IpPermissions", []):
+                for ipr in rule.get("IpRanges", []) + rule.get("Ipv6Ranges", []):
+                    cidr = ipr.get("CidrIp", ipr.get("CidrIpv6", ""))
+                    if cidr in ("0.0.0.0/0", "::/0"):
+                        proto = rule.get("IpProtocol", "")
+                        from_port = rule.get("FromPort")
+                        to_port = rule.get("ToPort")
+                        dangerous_ports = {22: "SSH", 3389: "RDP", 3306: "MySQL", 5432: "PostgreSQL", 1433: "MSSQL", 27017: "MongoDB", 6379: "Redis"}
+                        port_label = dangerous_ports.get(from_port, "")
+
+                        if proto == "-1" or port_label:
+                            severity = "CRITICAL"
+                            category = "network_exposure"
+                            title = f"{'All traffic' if proto == '-1' else port_label + ' (port ' + str(from_port) + ')'} open to internet"
+                        else:
+                            severity = "HIGH"
+                            category = "network_exposure"
+                            title = f"Port {from_port}-{to_port} open to internet"
+
+                        threat_id += 1
+                        threats.append({
+                            "id": f"TH-{threat_id:04d}",
+                            "severity": severity,
+                            "category": category,
+                            "title": title,
+                            "description": f"Security group {sg.get('GroupName', '')} ({sg.get('GroupId', '')}) allows {cidr} ingress",
+                            "resource": f"{sg.get('GroupId', '')} ({sg.get('GroupName', '')})",
+                            "resource_type": "SecurityGroup",
+                            "region": region,
+                            "detected_at": datetime.now().isoformat(),
+                            "status": "active",
+                            "mitre_tactic": "Initial Access",
+                            "mitre_technique": "T1190 - Exploit Public-Facing Application",
+                            "remediation": f"Restrict {sg.get('GroupId', '')} ingress to specific CIDRs. Remove 0.0.0.0/0 rule.",
+                        })
+
+        # ── Threat: Public EC2 instances ──
+        ec2 = _read_json(region_dir / "ec2-describe-instances.json")
+        for res in ec2.get("Reservations", []):
+            for inst in res.get("Instances", []):
+                if inst.get("PublicIpAddress") and inst.get("State", {}).get("Name") == "running":
+                    threat_id += 1
+                    threats.append({
+                        "id": f"TH-{threat_id:04d}",
+                        "severity": "HIGH",
+                        "category": "public_exposure",
+                        "title": f"EC2 instance with public IP: {inst.get('PublicIpAddress')}",
+                        "description": f"Instance {inst.get('InstanceId', '')} has public IP {inst.get('PublicIpAddress')} and is running",
+                        "resource": inst.get("InstanceId", ""),
+                        "resource_type": "EC2",
+                        "region": region,
+                        "detected_at": datetime.now().isoformat(),
+                        "status": "active",
+                        "mitre_tactic": "Initial Access",
+                        "mitre_technique": "T1133 - External Remote Services",
+                        "remediation": "Remove public IP. Use NAT Gateway, VPN, or Session Manager for access.",
+                    })
+
+        # ── Threat: Public RDS ──
+        rds = _read_json(region_dir / "rds-describe-db-instances.json")
+        for db in rds.get("DBInstances", []):
+            if db.get("PubliclyAccessible"):
+                threat_id += 1
+                threats.append({
+                    "id": f"TH-{threat_id:04d}",
+                    "severity": "CRITICAL",
+                    "category": "data_exposure",
+                    "title": f"Database publicly accessible: {db.get('DBInstanceIdentifier', '')}",
+                    "description": f"RDS instance {db.get('DBInstanceIdentifier', '')} ({db.get('Engine', '')}) is publicly accessible",
+                    "resource": db.get("DBInstanceIdentifier", ""),
+                    "resource_type": "RDS",
+                    "region": region,
+                    "detected_at": datetime.now().isoformat(),
+                    "status": "active",
+                    "mitre_tactic": "Collection",
+                    "mitre_technique": "T1530 - Data from Cloud Storage",
+                    "remediation": "Disable public access on the RDS instance. Move to private subnet.",
+                })
+
+        # ── Threat: GuardDuty not enabled ──
+        gd = _read_json(region_dir / "guardduty-list-detectors.json")
+        if not gd.get("DetectorIds"):
+            # Only flag for regions with resources
+            has_resources = bool(ec2.get("Reservations") or rds.get("DBInstances"))
+            if has_resources:
+                threat_id += 1
+                threats.append({
+                    "id": f"TH-{threat_id:04d}",
+                    "severity": "MEDIUM",
+                    "category": "detection_gap",
+                    "title": f"GuardDuty not enabled in {region}",
+                    "description": f"AWS GuardDuty threat detection is not active in {region} where resources exist",
+                    "resource": region,
+                    "resource_type": "GuardDuty",
+                    "region": region,
+                    "detected_at": datetime.now().isoformat(),
+                    "status": "active",
+                    "mitre_tactic": "Defense Evasion",
+                    "mitre_technique": "T1562 - Impair Defenses",
+                    "remediation": "Enable GuardDuty in this region for automated threat detection.",
+                })
+
+    # ── Threat: IAM issues ──
+    for region in regions[:1]:  # IAM is global, check once
+        region_dir = acct_dir / region
+        iam_auth = _read_json(region_dir / "iam-get-account-authorization-details.json")
+        iam_summary = _read_json(region_dir / "iam-get-account-summary.json").get("SummaryMap", {})
+
+        if not iam_summary.get("AccountMFAEnabled"):
+            threat_id += 1
+            threats.append({
+                "id": f"TH-{threat_id:04d}",
+                "severity": "CRITICAL",
+                "category": "identity_threat",
+                "title": "Root account MFA not enabled",
+                "description": "The AWS root account does not have MFA enabled, making it vulnerable to credential theft",
+                "resource": "root-account",
+                "resource_type": "IAM",
+                "region": "global",
+                "detected_at": datetime.now().isoformat(),
+                "status": "active",
+                "mitre_tactic": "Credential Access",
+                "mitre_technique": "T1078 - Valid Accounts",
+                "remediation": "Enable MFA on root account immediately. Use hardware MFA key.",
+            })
+
+        if iam_summary.get("AccountAccessKeysPresent"):
+            threat_id += 1
+            threats.append({
+                "id": f"TH-{threat_id:04d}",
+                "severity": "CRITICAL",
+                "category": "identity_threat",
+                "title": "Root account has access keys",
+                "description": "Active access keys exist for the root account, posing severe security risk",
+                "resource": "root-account",
+                "resource_type": "IAM",
+                "region": "global",
+                "detected_at": datetime.now().isoformat(),
+                "status": "active",
+                "mitre_tactic": "Credential Access",
+                "mitre_technique": "T1528 - Steal Application Access Token",
+                "remediation": "Delete root access keys. Use IAM roles instead.",
+            })
+
+        users_no_mfa = [u["UserName"] for u in iam_auth.get("UserDetailList", []) if not u.get("MFADevices")]
+        if users_no_mfa:
+            threat_id += 1
+            threats.append({
+                "id": f"TH-{threat_id:04d}",
+                "severity": "HIGH",
+                "category": "identity_threat",
+                "title": f"{len(users_no_mfa)} IAM users without MFA",
+                "description": f"Users without MFA: {', '.join(users_no_mfa[:10])}{'...' if len(users_no_mfa) > 10 else ''}",
+                "resource": f"{len(users_no_mfa)} users",
+                "resource_type": "IAM",
+                "region": "global",
+                "detected_at": datetime.now().isoformat(),
+                "status": "active",
+                "mitre_tactic": "Credential Access",
+                "mitre_technique": "T1078 - Valid Accounts",
+                "remediation": "Enable MFA for all IAM users with console access.",
+            })
+
+    # ── Threat: No CloudTrail ──
+    has_cloudtrail = False
+    for region in regions:
+        ct = _read_json(acct_dir / region / "cloudtrail-describe-trails.json")
+        if ct.get("trailList"):
+            has_cloudtrail = True
+            break
+    if not has_cloudtrail:
+        threat_id += 1
+        threats.append({
+            "id": f"TH-{threat_id:04d}",
+            "severity": "HIGH",
+            "category": "detection_gap",
+            "title": "No CloudTrail logging detected",
+            "description": "CloudTrail is not enabled, meaning API activity is not being logged for audit purposes",
+            "resource": "account",
+            "resource_type": "CloudTrail",
+            "region": "global",
+            "detected_at": datetime.now().isoformat(),
+            "status": "active",
+            "mitre_tactic": "Defense Evasion",
+            "mitre_technique": "T1562.008 - Disable Cloud Logs",
+            "remediation": "Enable CloudTrail in all regions with log file validation.",
+        })
+
+    # Sort by severity
+    sev_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
+    threats.sort(key=lambda t: sev_order.get(t["severity"], 5))
+
+    # Summary
+    sev_counts = {}
+    cat_counts = {}
+    for t in threats:
+        sev_counts[t["severity"]] = sev_counts.get(t["severity"], 0) + 1
+        cat_counts[t["category"]] = cat_counts.get(t["category"], 0) + 1
+
+    total = len(threats)
+    crit = sev_counts.get("CRITICAL", 0)
+    high = sev_counts.get("HIGH", 0)
+    risk_score = min(100, max(0, 100 - crit * 15 - high * 5 - sev_counts.get("MEDIUM", 0) * 2))
+
+    return {
+        "account": account_name,
+        "scanned_at": datetime.now().isoformat(),
+        "threats": threats,
+        "total": total,
+        "risk_score": risk_score,
+        "summary": {
+            "severity": {s: sev_counts.get(s, 0) for s in ["CRITICAL", "HIGH", "MEDIUM", "LOW"]},
+            "categories": cat_counts,
+        },
+    }
+
+
+@app.get("/api/threats/{account_name}")
+def get_threats(account_name: str, user: dict = Depends(get_current_user)):
+    """Get real-time threat detection results."""
+    result = _detect_threats(account_name)
+    if not result["threats"] and result["risk_score"] == 0:
+        raise HTTPException(404, f"No data for account '{account_name}'")
+    return result
+
+
 # ── COMPLIANCE MODULE ────────────────────────────────────────────
 from compliance.engine import ComplianceScanner, ComplianceStore
 from compliance.frameworks import get_all_frameworks, get_framework

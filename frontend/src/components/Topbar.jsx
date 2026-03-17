@@ -20,6 +20,7 @@ const PAGE_TITLES = {
   '/users': 'User Management', '/report': 'Comprehensive Report',
   '/compliance': 'Cloud Compliance',
   '/docs': 'Documentation',
+  '/threats': 'Threat Detection',
 };
 
 export default function Topbar({ account, provider, onAccountChange, accounts }) {
