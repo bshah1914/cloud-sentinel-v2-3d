@@ -159,5 +159,5 @@ export const getReport = (account) => request(`/report/${account}`);
 export const exportReport = (account, format = 'pdf') =>
   downloadFile(
     `/report/${account}/export?format=${format}`,
-    `CloudLunar-Report-${account}-${new Date().toISOString().split('T')[0]}.${format === 'excel' ? 'xlsx' : 'pdf'}`
+    `CloudSentinel-Report-${account}-${new Date().toISOString().split('T')[0]}.${format === 'excel' ? 'xlsx' : 'pdf'}`
   );

@@ -208,7 +208,7 @@ export default function CommandPalette() {
                   </div>
                 ))}
               </div>
-              <span className="text-[9px] text-text-muted/40">CloudLunar v3.0</span>
+              <span className="text-[9px] text-text-muted/40">CloudSentinel v3.0</span>
             </div>
           </motion.div>
         </>

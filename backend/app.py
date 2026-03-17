@@ -1,5 +1,5 @@
 """
-CloudLunar Enterprise — Multi-Cloud Security Platform
+CloudSentinel Enterprise — Multi-Cloud Security Platform
 FastAPI backend with provider plugin architecture for AWS, Azure, and GCP.
 """
 
@@ -90,7 +90,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
 
 
 # ── App Setup ────────────────────────────────────────────────────
-app = FastAPI(title="CloudLunar Enterprise API", version="3.0.0")
+app = FastAPI(title="CloudSentinel Enterprise API", version="3.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -1174,7 +1174,7 @@ def _generate_compliance_pdf(results):
 
     elements = []
     summary = results.get("summary", {})
-    elements.append(Paragraph("CloudLunar Compliance Report", title_s))
+    elements.append(Paragraph("CloudSentinel Compliance Report", title_s))
     elements.append(Paragraph(f"Account: {results.get('account')} | Scanned: {results.get('scanned_at', '')[:19]} | Score: {summary.get('overall_score', 0)}%", small))
     elements.append(Spacer(1, 10))
 
@@ -1676,11 +1676,11 @@ def export_comprehensive_report(account_name: str, format: str = "pdf",
         content = _generate_excel_report(data)
         return Response(content=content,
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        headers={"Content-Disposition": f'attachment; filename="CloudLunar-Report-{account_name}-{datetime.now().strftime("%Y%m%d")}.xlsx"'})
+                        headers={"Content-Disposition": f'attachment; filename="CloudSentinel-Report-{account_name}-{datetime.now().strftime("%Y%m%d")}.xlsx"'})
     else:
         content = _generate_comprehensive_pdf(data)
         return Response(content=content, media_type="application/pdf",
-                        headers={"Content-Disposition": f'attachment; filename="CloudLunar-Report-{account_name}-{datetime.now().strftime("%Y%m%d")}.pdf"'})
+                        headers={"Content-Disposition": f'attachment; filename="CloudSentinel-Report-{account_name}-{datetime.now().strftime("%Y%m%d")}.pdf"'})
 
 
 def _generate_excel_report(data):
@@ -1722,7 +1722,7 @@ def _generate_excel_report(data):
     ws = wb.active
     ws.title = "Executive Summary"
     ws.merge_cells('A1:F1')
-    ws['A1'] = f"CloudLunar Security Report — {data['account']}"
+    ws['A1'] = f"CloudSentinel Security Report — {data['account']}"
     ws['A1'].font = title_font
     ws['A2'] = f"Generated: {data['generated_at'][:19]}  |  Provider: {data['provider'].upper()}"
     ws['A2'].font = sub_font
@@ -1906,7 +1906,7 @@ def _generate_excel_report(data):
 
     # ── Sheet 7: AI Recommendations ──
     ws7 = wb.create_sheet("AI Recommendations")
-    ws7['A1'] = "CloudLunar AI — Security Intelligence Report"
+    ws7['A1'] = "CloudSentinel AI — Security Intelligence Report"
     ws7['A1'].font = title_font
     ws7['A2'] = f"WAF Score: {data['waf'].get('overall_score', 0)}%  |  Security Score: {dash.get('security_score', 0)}/100"
     ws7['A2'].font = Font(bold=True, size=11, color='4F46E5')
@@ -1947,7 +1947,7 @@ def _generate_comprehensive_pdf(data):
     totals = dash.get("totals", {})
 
     # Title
-    elements.append(Paragraph(f"CloudLunar Security Report", title_style))
+    elements.append(Paragraph(f"CloudSentinel Security Report", title_style))
     elements.append(Paragraph(f"Account: {data['account']}  |  Provider: {data['provider'].upper()}  |  Generated: {data['generated_at'][:19]}", small))
     elements.append(Spacer(1, 10))
 
@@ -2050,7 +2050,7 @@ def _generate_comprehensive_pdf(data):
 
     # AI Recommendations
     elements.append(Paragraph("AI Security Intelligence Report", h1))
-    elements.append(Paragraph(f"CloudLunar AI analysis based on your infrastructure scan data", small))
+    elements.append(Paragraph(f"CloudSentinel AI analysis based on your infrastructure scan data", small))
     elements.append(Spacer(1, 8))
     for topic, content in data.get('ai_recommendations', {}).items():
         for line in content.split('\n'):
@@ -2074,7 +2074,7 @@ def health():
     return {
         "status": "ok",
         "version": "3.0.0",
-        "platform": "CloudLunar Enterprise",
+        "platform": "CloudSentinel Enterprise",
         "providers": registry.provider_ids,
         "accounts_with_data": accounts_with_data,
         "timestamp": datetime.now().isoformat(),

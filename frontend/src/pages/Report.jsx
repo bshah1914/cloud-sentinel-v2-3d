@@ -498,7 +498,7 @@ export default function Report() {
       {/* Footer */}
       <div className="text-center py-4 border-t border-border/20">
         <p className="text-[10px] text-text-muted/50">
-          CloudLunar Enterprise Security Platform &bull; Report generated {new Date(data.generated_at).toLocaleString()} &bull; Account: {data.account}
+          CloudSentinel Enterprise Security Platform &bull; Report generated {new Date(data.generated_at).toLocaleString()} &bull; Account: {data.account}
         </p>
       </div>
     </div>

@@ -37,7 +37,7 @@ export default function Topbar({ account, provider, onAccountChange, accounts })
   }, []);
 
   const providerStyle = PROVIDER_COLORS[provider] || PROVIDER_COLORS.aws;
-  const pageTitle = PAGE_TITLES[location.pathname] || 'CloudLunar';
+  const pageTitle = PAGE_TITLES[location.pathname] || 'CloudSentinel';
 
   const openCommandPalette = () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }));

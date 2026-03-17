@@ -19,7 +19,7 @@ const DOCS = [
     sections: [
       {
         title: 'Quick Start Guide',
-        content: `CloudLunar is an enterprise multi-cloud security platform that helps you monitor, audit, and secure your AWS, Azure, and GCP infrastructure.
+        content: `CloudSentinel is an enterprise multi-cloud security platform that helps you monitor, audit, and secure your AWS, Azure, and GCP infrastructure.
 
 **Prerequisites:**
 • Python 3.10+ with pip
@@ -72,7 +72,7 @@ const DOCS = [
       },
       {
         title: 'Architecture Overview',
-        content: `CloudLunar uses a modular plugin-based architecture:
+        content: `CloudSentinel uses a modular plugin-based architecture:
 
 **Frontend:** React 19 + Tailwind CSS + Recharts + Framer Motion
 **Backend:** Python FastAPI with provider plugin system
@@ -490,7 +490,7 @@ Run regular scans to track compliance over time. The trend chart shows score cha
     sections: [
       {
         title: 'Using the AI Chat',
-        content: `CloudLunar includes an AI-powered security assistant that analyzes your actual cloud data.
+        content: `CloudSentinel includes an AI-powered security assistant that analyzes your actual cloud data.
 
 **Opening AI Chat:**
 • Click the sparkle button (✨) in the bottom-right corner
@@ -756,7 +756,7 @@ export default function Docs() {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-text">{currentDoc.title}</h1>
-                <p className="text-[10px] text-text-muted">{currentDoc.sections.length} section(s) &bull; CloudLunar v3.0</p>
+                <p className="text-[10px] text-text-muted">{currentDoc.sections.length} section(s) &bull; CloudSentinel v3.0</p>
               </div>
             </div>
 

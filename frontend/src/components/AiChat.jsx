@@ -69,7 +69,7 @@ export default function AiChat() {
   const [open, setOpen] = useState(false);
   const [minimized, setMinimized] = useState(false);
   const [messages, setMessages] = useState([
-    { role: 'assistant', content: "Welcome to CloudLunar AI! I analyze your cloud infrastructure against the **AWS Well-Architected Framework** and security best practices.\n\nI can help with:\n- **Well-Architected analysis** across 6 pillars\n- **Security risk assessment** and findings\n- **Compliance recommendations** (CIS, SOC2, GDPR)\n- **Actionable remediation** steps\n\nWhat would you like to know?" }
+    { role: 'assistant', content: "Welcome to CloudSentinel AI! I analyze your cloud infrastructure against the **AWS Well-Architected Framework** and security best practices.\n\nI can help with:\n- **Well-Architected analysis** across 6 pillars\n- **Security risk assessment** and findings\n- **Compliance recommendations** (CIS, SOC2, GDPR)\n- **Actionable remediation** steps\n\nWhat would you like to know?" }
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -160,7 +160,7 @@ export default function AiChat() {
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold text-text flex items-center gap-1.5">
-                    CloudLunar AI
+                    CloudSentinel AI
                     <span className="text-[8px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 font-semibold uppercase tracking-wider">Live</span>
                   </h3>
                   {!minimized && <p className="text-[10px] text-text-muted">Security Intelligence &bull; WAF Analysis</p>}
@@ -271,7 +271,7 @@ export default function AiChat() {
                       <Send className="w-4 h-4 text-white" />
                     </motion.button>
                   </div>
-                  <p className="text-[8px] text-text-muted/40 text-center mt-1.5">Powered by CloudLunar Security Intelligence Engine</p>
+                  <p className="text-[8px] text-text-muted/40 text-center mt-1.5">Powered by CloudSentinel Security Intelligence Engine</p>
                 </div>
               </>
             )}

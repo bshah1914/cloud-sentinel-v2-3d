@@ -69,7 +69,7 @@ export default function Sidebar({ collapsed, onToggle, activeProvider }) {
                 exit={{ opacity: 0, x: -10 }}
                 className="whitespace-nowrap"
               >
-                <h1 className="text-sm font-bold gradient-text">CloudLunar</h1>
+                <h1 className="text-sm font-bold gradient-text">CloudSentinel</h1>
                 <p className="text-[10px] text-text-muted tracking-wider uppercase">Enterprise Security</p>
               </motion.div>
             )}
@@ -180,7 +180,7 @@ export default function Sidebar({ collapsed, onToggle, activeProvider }) {
             <div className="rounded-xl bg-gradient-to-br from-primary/15 to-accent/10 border border-primary/10 p-3.5">
               <div className="flex items-center gap-2 mb-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-primary-light" />
-                <span className="text-xs font-semibold text-text">CloudLunar Pro</span>
+                <span className="text-xs font-semibold text-text">CloudSentinel Pro</span>
               </div>
               <p className="text-[10px] text-text-muted leading-relaxed">Multi-cloud scanning with real-time alerts and compliance reports.</p>
             </div>

@@ -133,7 +133,7 @@ export default function Login() {
             transition={{ delay: 0.25 }}
             className="text-4xl font-bold gradient-text"
           >
-            CloudLunar
+            CloudSentinel
           </motion.h1>
           <motion.p
             initial={{ opacity: 0 }}
@@ -261,7 +261,7 @@ export default function Login() {
           transition={{ delay: 0.8 }}
           className="text-center text-xs text-text-muted/50 mt-6"
         >
-          CloudLunar v2.0.0
+          CloudSentinel v3.0
         </motion.p>
       </motion.div>
     </div>
