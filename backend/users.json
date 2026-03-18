@@ -1,7 +1,7 @@
 [
   {
     "username": "admin",
-    "hashed_password": "$2b$12$6jXXIFIEYg0u6UnQEPFUTO1b4Ftzrxv21VzWZTb3ui/QSwk9a9kfe",
+    "hashed_password": "$2b$12$FfU1WehT75zhd7/OtCJcQuWV4FjQig2yjRmQKNujJl5RHnxiq/Eya",
     "role": "admin",
     "created": "2026-03-09T12:58:27"
   }
