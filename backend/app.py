@@ -86,9 +86,26 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
             raise HTTPException(401, "Invalid token")
     except JWTError:
         raise HTTPException(401, "Invalid or expired token")
-    for user in _load_users():
-        if user["username"] == username:
-            return user
+
+    user_type = payload.get("user_type", "owner")
+
+    # Owner/admin users
+    if user_type == "owner":
+        for user in _load_users():
+            if user["username"] == username:
+                user["user_type"] = "owner"
+                return user
+
+    # Client users
+    if user_type == "client":
+        from tenants import _load_data
+        data = _load_data()
+        for user in data["client_users"]:
+            if user["username"] == username:
+                user["user_type"] = "client"
+                user["org_id"] = payload.get("org_id", user.get("org_id"))
+                return user
+
     raise HTTPException(401, "User not found")
 
 
@@ -226,25 +243,191 @@ def _get_regions_for_account(account_name: str, provider: str = "aws") -> list[s
     return [d.name for d in acct_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
 
 
+# ── Tenant System ───────────────────────────────────────────────
+import tenants as tenant_mgr
+
 # ── AUTH ENDPOINTS ───────────────────────────────────────────────
 @app.post("/api/auth/login")
 def login(req: LoginRequest):
+    # Try owner/admin login first
     user = _authenticate_user(req.username, req.password)
-    if not user:
-        raise HTTPException(401, "Invalid username or password")
-    token = _create_token(
-        {"sub": user["username"], "role": user["role"]},
-        timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
-    )
-    return {
-        "access_token": token, "token_type": "bearer",
-        "user": {"username": user["username"], "role": user["role"]},
-    }
+    if user:
+        token = _create_token(
+            {"sub": user["username"], "role": user["role"], "user_type": "owner"},
+            timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+        )
+        return {
+            "access_token": token, "token_type": "bearer",
+            "user": {"username": user["username"], "role": user["role"], "user_type": "owner"},
+        }
+
+    # Try client login
+    client_user = tenant_mgr.authenticate_client_user(req.username, req.password)
+    if client_user:
+        if isinstance(client_user, dict) and "error" in client_user:
+            raise HTTPException(403, client_user["error"])
+        token = _create_token(
+            {"sub": client_user["username"], "role": client_user["role"],
+             "user_type": "client", "org_id": client_user["org_id"]},
+            timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+        )
+        return {
+            "access_token": token, "token_type": "bearer",
+            "user": {
+                "username": client_user["username"], "role": client_user["role"],
+                "user_type": "client", "org_id": client_user["org_id"],
+                "org_name": client_user.get("org_name", ""),
+            },
+        }
+
+    raise HTTPException(401, "Invalid username or password")
 
 
 @app.get("/api/auth/me")
 def get_me(user: dict = Depends(get_current_user)):
-    return {"username": user["username"], "role": user["role"], "created": user.get("created")}
+    result = {"username": user["username"], "role": user["role"], "created": user.get("created"),
+              "user_type": user.get("user_type", "owner")}
+    if user.get("user_type") == "client":
+        result["org_id"] = user.get("org_id")
+        result["org_name"] = user.get("org_name", "")
+    return result
+
+
+# ── Helper: Require Owner ────────────────────────────────────────
+def require_owner(user: dict = Depends(get_current_user)):
+    if user.get("role") not in ("admin", "editor"):
+        raise HTTPException(403, "Owner access required")
+    return user
+
+
+# ── OWNER: Organization Management ──────────────────────────────
+class OrgCreateRequest(BaseModel):
+    name: str
+    contact_email: str
+    plan: str = "free"
+
+class OrgUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    contact_email: Optional[str] = None
+    plan: Optional[str] = None
+    status: Optional[str] = None
+
+class ClientUserCreateRequest(BaseModel):
+    username: str
+    password: str
+    email: str
+    role: str = "viewer"
+
+
+@app.get("/api/admin/stats")
+def admin_platform_stats(user: dict = Depends(require_owner)):
+    return tenant_mgr.get_platform_stats()
+
+
+@app.get("/api/admin/clients")
+def admin_list_clients(user: dict = Depends(require_owner)):
+    return {"clients": tenant_mgr.get_all_organizations()}
+
+
+@app.post("/api/admin/clients")
+def admin_create_client(req: OrgCreateRequest, user: dict = Depends(require_owner)):
+    org = tenant_mgr.create_organization(req.name, req.contact_email, req.plan)
+    return org
+
+
+@app.get("/api/admin/clients/{org_id}")
+def admin_get_client(org_id: str, user: dict = Depends(require_owner)):
+    org = tenant_mgr.get_organization(org_id)
+    if not org:
+        raise HTTPException(404, "Client not found")
+    org["users"] = tenant_mgr.get_client_users(org_id)
+    org["invoices"] = tenant_mgr.get_invoices(org_id)
+    org["activity"] = tenant_mgr.get_activity_log(org_id, limit=20)
+    return org
+
+
+@app.put("/api/admin/clients/{org_id}")
+def admin_update_client(org_id: str, req: OrgUpdateRequest, user: dict = Depends(require_owner)):
+    updates = {k: v for k, v in req.dict().items() if v is not None}
+    org = tenant_mgr.update_organization(org_id, updates)
+    if not org:
+        raise HTTPException(404, "Client not found")
+    return org
+
+
+@app.delete("/api/admin/clients/{org_id}")
+def admin_delete_client(org_id: str, user: dict = Depends(require_owner)):
+    tenant_mgr.delete_organization(org_id)
+    return {"status": "deleted"}
+
+
+@app.post("/api/admin/clients/{org_id}/users")
+def admin_create_client_user(org_id: str, req: ClientUserCreateRequest, user: dict = Depends(require_owner)):
+    result = tenant_mgr.create_client_user(org_id, req.username, req.password, req.email, req.role)
+    if not result:
+        raise HTTPException(404, "Organization not found")
+    if isinstance(result, dict) and "error" in result:
+        raise HTTPException(400, result["error"])
+    return result
+
+
+@app.get("/api/admin/clients/{org_id}/users")
+def admin_list_client_users(org_id: str, user: dict = Depends(require_owner)):
+    return {"users": tenant_mgr.get_client_users(org_id)}
+
+
+@app.delete("/api/admin/users/{user_id}")
+def admin_delete_client_user(user_id: str, user: dict = Depends(require_owner)):
+    tenant_mgr.delete_client_user(user_id)
+    return {"status": "deleted"}
+
+
+@app.get("/api/admin/activity")
+def admin_activity_log(user: dict = Depends(require_owner)):
+    return {"activity": tenant_mgr.get_activity_log(limit=100)}
+
+
+@app.get("/api/admin/invoices")
+def admin_all_invoices(user: dict = Depends(require_owner)):
+    return {"invoices": tenant_mgr.get_invoices()}
+
+
+@app.get("/api/admin/plans")
+def admin_get_plans(user: dict = Depends(require_owner)):
+    return {"plans": tenant_mgr.PLANS}
+
+
+# ── CLIENT: Self-service endpoints ──────────────────────────────
+@app.get("/api/client/profile")
+def client_profile(user: dict = Depends(get_current_user)):
+    org_id = user.get("org_id")
+    if not org_id:
+        raise HTTPException(403, "Client access required")
+    org = tenant_mgr.get_organization(org_id)
+    if not org:
+        raise HTTPException(404, "Organization not found")
+    plan_details = tenant_mgr.PLANS.get(org["plan"], {})
+    return {
+        "organization": org,
+        "plan": plan_details,
+        "users": tenant_mgr.get_client_users(org_id),
+    }
+
+
+@app.get("/api/client/invoices")
+def client_invoices(user: dict = Depends(get_current_user)):
+    org_id = user.get("org_id")
+    if not org_id:
+        raise HTTPException(403, "Client access required")
+    return {"invoices": tenant_mgr.get_invoices(org_id)}
+
+
+@app.get("/api/client/activity")
+def client_activity(user: dict = Depends(get_current_user)):
+    org_id = user.get("org_id")
+    if not org_id:
+        raise HTTPException(403, "Client access required")
+    return {"activity": tenant_mgr.get_activity_log(org_id, limit=50)}
 
 
 # ── USER MANAGEMENT (RBAC) ──────────────────────────────────────

@@ -18,6 +18,8 @@ import Docs from './pages/Docs';
 import Threats from './pages/Threats';
 import Pricing from './pages/Pricing';
 import Support from './pages/Support';
+import AdminPanel from './pages/AdminPanel';
+import ClientDashboard from './pages/ClientDashboard';
 import Loader from './components/Loader';
 
 function ProtectedRoutes() {
@@ -33,24 +35,47 @@ function ProtectedRoutes() {
 
   if (!user) return <Navigate to="/login" replace />;
 
+  const isClient = user.user_type === 'client';
+
   return (
     <Routes>
       <Route element={<Layout />}>
-        <Route path="/" element={<Overview />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/accounts" element={<Accounts />} />
-        <Route path="/audit" element={<Audit />} />
-        <Route path="/resources" element={<Resources />} />
-        <Route path="/iam" element={<IAM />} />
-        <Route path="/security-groups" element={<SecurityGroups />} />
-        <Route path="/scan" element={<Scan />} />
-        <Route path="/users" element={<Users />} />
-        <Route path="/report" element={<Report />} />
-        <Route path="/compliance" element={<Compliance />} />
-        <Route path="/docs" element={<Docs />} />
-        <Route path="/threats" element={<Threats />} />
-        <Route path="/pricing" element={<Pricing />} />
-        <Route path="/support" element={<Support />} />
+        {/* Owner/Admin Routes */}
+        {!isClient && (
+          <>
+            <Route path="/" element={<Overview />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/accounts" element={<Accounts />} />
+            <Route path="/audit" element={<Audit />} />
+            <Route path="/resources" element={<Resources />} />
+            <Route path="/iam" element={<IAM />} />
+            <Route path="/security-groups" element={<SecurityGroups />} />
+            <Route path="/scan" element={<Scan />} />
+            <Route path="/users" element={<Users />} />
+            <Route path="/report" element={<Report />} />
+            <Route path="/compliance" element={<Compliance />} />
+            <Route path="/docs" element={<Docs />} />
+            <Route path="/threats" element={<Threats />} />
+            <Route path="/pricing" element={<Pricing />} />
+            <Route path="/support" element={<Support />} />
+            <Route path="/admin" element={<AdminPanel />} />
+          </>
+        )}
+
+        {/* Client Routes */}
+        {isClient && (
+          <>
+            <Route path="/" element={<ClientDashboard />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/compliance" element={<Compliance />} />
+            <Route path="/threats" element={<Threats />} />
+            <Route path="/report" element={<Report />} />
+            <Route path="/resources" element={<Resources />} />
+            <Route path="/scan" element={<Scan />} />
+            <Route path="/support" element={<Support />} />
+            <Route path="/my-account" element={<ClientDashboard />} />
+          </>
+        )}
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

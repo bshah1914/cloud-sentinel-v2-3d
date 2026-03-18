@@ -161,3 +161,22 @@ export const exportReport = (account, format = 'pdf') =>
     `/report/${account}/export?format=${format}`,
     `CloudSentinel-Report-${account}-${new Date().toISOString().split('T')[0]}.${format === 'excel' ? 'xlsx' : 'pdf'}`
   );
+
+// ── Admin (Owner) APIs ──────────────────────────────────────────
+export const getAdminStats = () => request('/admin/stats');
+export const getAdminClients = () => request('/admin/clients');
+export const createClient = (data) => request('/admin/clients', { method: 'POST', body: JSON.stringify(data) });
+export const getClient = (orgId) => request(`/admin/clients/${orgId}`);
+export const updateClient = (orgId, data) => request(`/admin/clients/${orgId}`, { method: 'PUT', body: JSON.stringify(data) });
+export const deleteClient = (orgId) => request(`/admin/clients/${orgId}`, { method: 'DELETE' });
+export const createClientUser = (orgId, data) => request(`/admin/clients/${orgId}/users`, { method: 'POST', body: JSON.stringify(data) });
+export const getClientUsers = (orgId) => request(`/admin/clients/${orgId}/users`);
+export const deleteClientUser = (userId) => request(`/admin/users/${userId}`, { method: 'DELETE' });
+export const getAdminActivity = () => request('/admin/activity');
+export const getAdminInvoices = () => request('/admin/invoices');
+export const getAdminPlans = () => request('/admin/plans');
+
+// ── Client Self-service APIs ────────────────────────────────────
+export const getClientProfile = () => request('/client/profile');
+export const getClientInvoices = () => request('/client/invoices');
+export const getClientActivity = () => request('/client/activity');

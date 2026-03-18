@@ -1,13 +1,15 @@
 import { NavLink, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx } from 'clsx';
+import { useAuth } from '../auth';
 import {
   LayoutDashboard, Users, ShieldCheck, Server, KeyRound,
   ShieldAlert, ScanLine, Cloud, ChevronLeft, ChevronRight,
-  UserCog, Layers, Sparkles, FileText, ClipboardCheck, BookOpen, Crosshair, Crown, Headphones
+  UserCog, Layers, Sparkles, FileText, ClipboardCheck, BookOpen, Crosshair, Crown, Headphones,
+  Settings, Building2
 } from 'lucide-react';
 
-const nav = [
+const ownerNav = [
   { to: '/', icon: LayoutDashboard, label: 'Overview', section: 'main' },
   { to: '/dashboard', icon: Layers, label: 'Dashboard', section: 'main' },
   { to: '/accounts', icon: Users, label: 'Accounts', section: 'manage' },
@@ -20,9 +22,22 @@ const nav = [
   { to: '/compliance', icon: ClipboardCheck, label: 'Compliance', section: 'compliance' },
   { to: '/report', icon: FileText, label: 'Report', section: 'report' },
   { to: '/docs', icon: BookOpen, label: 'Docs', section: 'report' },
-  { to: '/support', icon: Headphones, label: 'Support', section: 'admin' },
-  { to: '/pricing', icon: Crown, label: 'Plans', section: 'admin' },
-  { to: '/users', icon: UserCog, label: 'Users', section: 'admin' },
+  { to: '/admin', icon: Building2, label: 'Admin Panel', section: 'platform' },
+  { to: '/support', icon: Headphones, label: 'Support', section: 'platform' },
+  { to: '/pricing', icon: Crown, label: 'Plans', section: 'platform' },
+  { to: '/users', icon: UserCog, label: 'Users', section: 'platform' },
+];
+
+const clientNav = [
+  { to: '/', icon: LayoutDashboard, label: 'My Dashboard', section: 'main' },
+  { to: '/dashboard', icon: Layers, label: 'Security', section: 'main' },
+  { to: '/scan', icon: ScanLine, label: 'Scans', section: 'manage' },
+  { to: '/resources', icon: Server, label: 'Resources', section: 'security' },
+  { to: '/threats', icon: Crosshair, label: 'Threats', section: 'security' },
+  { to: '/compliance', icon: ClipboardCheck, label: 'Compliance', section: 'compliance' },
+  { to: '/report', icon: FileText, label: 'Report', section: 'report' },
+  { to: '/my-account', icon: Settings, label: 'My Account', section: 'account' },
+  { to: '/support', icon: Headphones, label: 'Support', section: 'account' },
 ];
 
 const SECTIONS = {
@@ -31,7 +46,8 @@ const SECTIONS = {
   security: 'Security',
   compliance: 'Compliance',
   report: 'Reports',
-  admin: 'Admin',
+  platform: 'Platform',
+  account: 'Account',
 };
 
 const PROVIDER_COLORS = {
@@ -42,7 +58,10 @@ const PROVIDER_COLORS = {
 
 export default function Sidebar({ collapsed, onToggle, activeProvider }) {
   const location = useLocation();
+  const { user } = useAuth();
   const providerInfo = PROVIDER_COLORS[activeProvider];
+  const isClient = user?.user_type === 'client';
+  const nav = isClient ? clientNav : ownerNav;
 
   let lastSection = null;
 
@@ -72,7 +91,9 @@ export default function Sidebar({ collapsed, onToggle, activeProvider }) {
                 className="whitespace-nowrap"
               >
                 <h1 className="text-sm font-bold gradient-text">CloudSentinel</h1>
-                <p className="text-[10px] text-text-muted tracking-wider uppercase">Enterprise Security</p>
+                <p className="text-[10px] text-text-muted tracking-wider uppercase">
+                  {isClient ? user?.org_name || 'Client Portal' : 'Enterprise Security'}
+                </p>
               </motion.div>
             )}
           </AnimatePresence>
@@ -102,6 +123,16 @@ export default function Sidebar({ collapsed, onToggle, activeProvider }) {
                 </motion.span>
               )}
             </AnimatePresence>
+          </div>
+        </div>
+      )}
+
+      {/* Client badge */}
+      {isClient && !collapsed && (
+        <div className="px-3 pt-3">
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-emerald-500/15 to-emerald-600/5 border border-emerald-500/20">
+            <span className="w-2 h-2 rounded-full bg-emerald-400" />
+            <span className="text-xs font-semibold text-emerald-300 uppercase tracking-wider">Client Portal</span>
           </div>
         </div>
       )}
@@ -170,7 +201,7 @@ export default function Sidebar({ collapsed, onToggle, activeProvider }) {
         })}
       </nav>
 
-      {/* Upgrade banner - only when expanded */}
+      {/* Banner - different for owner/client */}
       <AnimatePresence>
         {!collapsed && (
           <motion.div
@@ -179,13 +210,23 @@ export default function Sidebar({ collapsed, onToggle, activeProvider }) {
             exit={{ opacity: 0, height: 0 }}
             className="px-3 pb-2 overflow-hidden"
           >
-            <div className="rounded-xl bg-gradient-to-br from-primary/15 to-accent/10 border border-primary/10 p-3.5">
-              <div className="flex items-center gap-2 mb-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-primary-light" />
-                <span className="text-xs font-semibold text-text">CloudSentinel Pro</span>
+            {isClient ? (
+              <div className="rounded-xl bg-gradient-to-br from-emerald-500/10 to-cyan-500/5 border border-emerald-500/10 p-3.5">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-xs font-semibold text-text">{user?.org_name || 'Client'}</span>
+                </div>
+                <p className="text-[10px] text-text-muted leading-relaxed">Your cloud infrastructure is being monitored 24/7.</p>
               </div>
-              <p className="text-[10px] text-text-muted leading-relaxed">Multi-cloud scanning with real-time alerts and compliance reports.</p>
-            </div>
+            ) : (
+              <div className="rounded-xl bg-gradient-to-br from-primary/15 to-accent/10 border border-primary/10 p-3.5">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-primary-light" />
+                  <span className="text-xs font-semibold text-text">CloudSentinel Pro</span>
+                </div>
+                <p className="text-[10px] text-text-muted leading-relaxed">Multi-cloud scanning with real-time alerts and compliance reports.</p>
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>

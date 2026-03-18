@@ -169,7 +169,7 @@ export default function Login() {
           transition={{ delay: 0.35, duration: 0.5 }}
           className="glass-strong rounded-2xl p-8 shadow-2xl shadow-black/20"
         >
-          <h2 className="text-lg font-semibold text-center mb-6 text-text">Welcome Back</h2>
+          <h2 className="text-lg font-semibold text-center mb-6 text-text">Welcome</h2>
 
           {error && (
             <motion.div
