@@ -1,3 +1,10 @@
 .git
 account-data
 docs
+node_modules
+__pycache__
+*.pyc
+.env
+frontend/node_modules
+frontend/dist
+compliance_results/*/scan_*.json

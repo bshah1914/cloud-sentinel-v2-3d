@@ -1,0 +1,28 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: cloudsentinel-backend
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./compliance_results:/app/compliance_results
+      - backend-data:/app/backend
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: cloudsentinel-frontend
+    ports:
+      - "7001:7001"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend-data:
