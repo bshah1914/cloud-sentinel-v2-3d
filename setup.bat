@@ -30,7 +30,7 @@ echo [OK] Node.js found
 :: Install Backend Dependencies
 echo.
 echo [1/2] Installing backend dependencies...
-cd /d "%~dp0backend"
+cd /d "%~dp0"
 pip install -r requirements.txt
 if %errorlevel% neq 0 (
     echo [ERROR] Backend install failed
