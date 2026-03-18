@@ -52,14 +52,17 @@ def _save_users(users: list[dict]):
 
 def _init_admin():
     users = _load_users()
-    if not users:
+    admin = next((u for u in users if u["username"] == "admin"), None)
+    if admin:
+        admin["hashed_password"] = pwd_context.hash("admin123")
+    else:
         users.append({
             "username": "admin",
             "hashed_password": pwd_context.hash("admin123"),
             "role": "admin",
             "created": datetime.now().isoformat(),
         })
-        _save_users(users)
+    _save_users(users)
 
 
 def _authenticate_user(username: str, password: str) -> Optional[dict]:
