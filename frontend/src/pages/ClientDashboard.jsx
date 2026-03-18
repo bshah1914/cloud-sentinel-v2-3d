@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { getClientProfile, getMultiCloudOverview, getResources, getThreats, getComplianceResults, getSecurityGroups, getIAM } from '../api';
-import { AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
+import { BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
 
 const COLORS = ['#7c3aed', '#06b6d4', '#f59e0b', '#ef4444', '#10b981', '#3b82f6', '#ec4899', '#8b5cf6'];
 
@@ -20,18 +20,11 @@ export default function ClientDashboard() {
         setProfile(p);
         const accountName = p.organization?.cloud_accounts?.[0]?.name;
         if (accountName) {
-          const [ov, th, comp, sg, im] = await Promise.allSettled([
-            getMultiCloudOverview(),
-            getThreats(accountName),
-            getComplianceResults(accountName),
-            getSecurityGroups(accountName),
-            getIAM(accountName),
-          ]);
-          if (ov.status === 'fulfilled') setOverview(ov.value);
-          if (th.status === 'fulfilled') setThreats(th.value);
-          if (comp.status === 'fulfilled') setCompliance(comp.value);
-          if (sg.status === 'fulfilled') setSecGroups(sg.value);
-          if (im.status === 'fulfilled') setIam(im.value);
+          try { setOverview(await getMultiCloudOverview()); } catch(e) {}
+          try { setThreats(await getThreats(accountName)); } catch(e) {}
+          try { setCompliance(await getComplianceResults(accountName)); } catch(e) {}
+          try { setSecGroups(await getSecurityGroups(accountName)); } catch(e) {}
+          try { setIam(await getIAM(accountName)); } catch(e) {}
         }
       } catch (e) { console.error(e); }
       setLoading(false);
@@ -65,8 +58,9 @@ export default function ClientDashboard() {
   threatList.forEach(t => { threatByCategory[t.category] = (threatByCategory[t.category] || 0) + 1; });
   const threatCategoryData = Object.entries(threatByCategory).map(([name, value]) => ({ name: name.replace(/_/g, ' '), value }));
 
-  // Compliance stats
-  const compFrameworks = compliance?.frameworks || [];
+  // Compliance stats — frameworks can be dict or array
+  const rawFrameworks = compliance?.frameworks || {};
+  const compFrameworks = Array.isArray(rawFrameworks) ? rawFrameworks : Object.values(rawFrameworks);
   const compData = compFrameworks.map(f => ({
     name: f.short_name || f.name?.substring(0, 8),
     score: f.score || 0,
