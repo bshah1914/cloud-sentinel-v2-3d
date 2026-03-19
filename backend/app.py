@@ -4,6 +4,7 @@ FastAPI backend with provider plugin architecture for AWS, Azure, and GCP.
 """
 
 import json
+import os
 import shutil
 import threading
 import uuid
@@ -1685,6 +1686,85 @@ class AiChatRequest(BaseModel):
     history: list = []
 
 # Well-Architected Framework pillars for AI analysis
+def _check_multi_az(d):
+    """Check if instances are deployed across multiple AZs (not just regions)."""
+    account = d.get("account", "")
+    base = os.path.join(str(ACCOUNT_DATA_DIR), "aws", account)
+    if not os.path.isdir(base):
+        base = os.path.join(str(ACCOUNT_DATA_DIR), account)
+    azs = set()
+    for region in os.listdir(base) if os.path.isdir(base) else []:
+        ec2_file = os.path.join(base, region, "ec2-describe-instances.json")
+        if os.path.isfile(ec2_file):
+            try:
+                data = json.load(open(ec2_file))
+                for r in data.get("Reservations", []):
+                    for i in r.get("Instances", []):
+                        az = i.get("Placement", {}).get("AvailabilityZone", "")
+                        if az:
+                            azs.add(az)
+            except Exception:
+                pass
+    return len(azs) > 1
+
+
+def _check_right_sized(d):
+    """Check if any instances are oversized (xlarge or bigger)."""
+    account = d.get("account", "")
+    base = os.path.join(str(ACCOUNT_DATA_DIR), "aws", account)
+    if not os.path.isdir(base):
+        base = os.path.join(str(ACCOUNT_DATA_DIR), account)
+    oversized = 0
+    total = 0
+    for region in os.listdir(base) if os.path.isdir(base) else []:
+        ec2_file = os.path.join(base, region, "ec2-describe-instances.json")
+        if os.path.isfile(ec2_file):
+            try:
+                data = json.load(open(ec2_file))
+                for r in data.get("Reservations", []):
+                    for i in r.get("Instances", []):
+                        total += 1
+                        itype = i.get("InstanceType", "")
+                        if any(x in itype for x in ["xlarge", "2xlarge", "4xlarge", "8xlarge", "metal"]):
+                            oversized += 1
+            except Exception:
+                pass
+    if total == 0:
+        return True
+    return oversized / total < 0.5  # Fail if more than half are oversized
+
+
+def _check_region_consolidation(d):
+    """Check if compute/lambda/rds resources are concentrated in <= 3 regions."""
+    account = d.get("account", "")
+    base = os.path.join(str(ACCOUNT_DATA_DIR), "aws", account)
+    if not os.path.isdir(base):
+        base = os.path.join(str(ACCOUNT_DATA_DIR), account)
+    regions_with_compute = 0
+    for region in os.listdir(base) if os.path.isdir(base) else []:
+        rdir = os.path.join(base, region)
+        if not os.path.isdir(rdir):
+            continue
+        has_compute = False
+        for fname, key in [("ec2-describe-instances.json", "Reservations"),
+                           ("lambda-list-functions.json", "Functions"),
+                           ("rds-describe-db-instances.json", "DBInstances")]:
+            f = os.path.join(rdir, fname)
+            if os.path.isfile(f):
+                try:
+                    items = json.load(open(f)).get(key, [])
+                    if key == "Reservations":
+                        items = [i for r in items for i in r.get("Instances", [])]
+                    if items:
+                        has_compute = True
+                        break
+                except Exception:
+                    pass
+        if has_compute:
+            regions_with_compute += 1
+    return regions_with_compute <= 3
+
+
 WAF_PILLARS = {
     "security": {
         "name": "Security",
@@ -1699,7 +1779,7 @@ WAF_PILLARS = {
     "reliability": {
         "name": "Reliability",
         "checks": [
-            ("Multi-AZ", lambda d: len([r for r, s in d.get("regions", {}).items() if s.get("has_resources")]) > 1, "Deploy across multiple availability zones"),
+            ("Multi-AZ", lambda d: _check_multi_az(d), "Deploy across multiple availability zones"),
             ("Snapshots exist", lambda d: d.get("totals", {}).get("snapshots", 0) > 0, "Create regular EBS/RDS snapshots"),
             ("ELBs present", lambda d: d.get("totals", {}).get("elbs", 0) > 0, "Use load balancers for high availability"),
         ],
@@ -1707,7 +1787,7 @@ WAF_PILLARS = {
     "performance": {
         "name": "Performance Efficiency",
         "checks": [
-            ("Right-sized instances", lambda d: True, "Review instance types for right-sizing"),
+            ("Right-sized instances", lambda d: _check_right_sized(d), "Review instance types for right-sizing"),
             ("Lambda usage", lambda d: d.get("totals", {}).get("lambdas", 0) > 0, "Consider serverless for variable workloads"),
         ],
     },
@@ -1728,7 +1808,7 @@ WAF_PILLARS = {
     "sustainability": {
         "name": "Sustainability",
         "checks": [
-            ("Region consolidation", lambda d: len([r for r, s in d.get("regions", {}).items() if s.get("has_resources")]) <= 5, "Consolidate resources to fewer regions"),
+            ("Region consolidation", lambda d: _check_region_consolidation(d), "Consolidate resources to fewer regions"),
         ],
     },
 }
