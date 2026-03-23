@@ -83,30 +83,8 @@ def _init_admin():
         pass
 
 def _authenticate_user(username: str, password: str) -> Optional[dict]:
-    """Authenticate from database first, then JSON fallback."""
-    try:
-        from models.database import SessionLocal, User as DBUser
-        db = SessionLocal()
-        user = db.query(DBUser).filter(DBUser.username == username, DBUser.is_active == True).first()
-        if user and pwd_context.verify(password, user.password_hash):
-            result = {"username": user.username, "hashed_password": user.password_hash,
-                      "role": user.role, "user_type": user.user_type, "org_id": user.org_id,
-                      "email": user.email, "id": user.id,
-                      "created": user.created_at.isoformat() if user.created_at else ""}
-            # Update last_login
-            user.last_login = datetime.utcnow()
-            db.commit()
-            db.close()
-            return result
-        db.close()
-    except Exception:
-        pass
-    # Fallback to JSON
-    for user in (json.load(open(USERS_FILE)) if USERS_FILE.exists() else []):
-        hp = user.get("hashed_password", user.get("password", ""))
-        if user["username"] == username and hp and pwd_context.verify(password, hp):
-            return user
-    return None
+    """Authenticate from database (single source of truth)."""
+    return db_ops.authenticate_user(username, password)
 
 
 def _create_token(data: dict, expires_delta: timedelta) -> str:
@@ -124,42 +102,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
     except JWTError:
         raise HTTPException(401, "Invalid or expired token")
 
-    user_type = payload.get("user_type", "owner")
-
-    # Try database first
-    try:
-        from models.database import SessionLocal, User as DBUser
-        db = SessionLocal()
-        db_user = db.query(DBUser).filter(DBUser.username == username, DBUser.is_active == True).first()
-        if db_user:
-            result = {"username": db_user.username, "role": db_user.role,
-                      "user_type": db_user.user_type, "org_id": db_user.org_id,
-                      "email": db_user.email, "id": db_user.id,
-                      "org_name": payload.get("org_name", "")}
-            db.close()
-            return result
-        db.close()
-    except Exception:
-        pass
-
-    # Fallback to JSON
-    if user_type == "owner":
-        for user in _load_users():
-            if user["username"] == username:
-                user["user_type"] = "owner"
-                return user
-
-    if user_type == "client":
-        try:
-            from tenants import _load_data
-            data = _load_data()
-            for user in data.get("client_users", []):
-                if user["username"] == username:
-                    user["user_type"] = "client"
-                    user["org_id"] = payload.get("org_id", user.get("org_id"))
-                    return user
-        except Exception:
-            pass
+    # Get user from database (single source of truth)
+    user = db_ops.get_user_by_username(username)
+    if user:
+        user["org_name"] = payload.get("org_name", "")
+        return user
 
     raise HTTPException(401, "User not found")
 
@@ -484,8 +431,8 @@ def _get_regions_for_account(account_name: str, provider: str = "aws") -> list[s
     return [d.name for d in acct_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
 
 
-# ── Tenant System ───────────────────────────────────────────────
-import tenants as tenant_mgr
+# ── Database Operations (Single Source of Truth) ─────────────────
+import services.db_ops as db_ops
 
 # ── AUTH ENDPOINTS ───────────────────────────────────────────────
 @app.post("/api/auth/login")
@@ -535,25 +482,6 @@ def login(req: LoginRequest, request: __import__("fastapi").Request = None):
 
         return {"access_token": token, "token_type": "bearer", "user": response_user}
 
-    # Fallback: try legacy tenant system
-    try:
-        client_user = tenant_mgr.authenticate_client_user(req.username, req.password)
-        if client_user:
-            if isinstance(client_user, dict) and "error" in client_user:
-                raise HTTPException(403, client_user["error"])
-            token = _create_token(
-                {"sub": client_user["username"], "role": client_user["role"],
-                 "user_type": "client", "org_id": client_user.get("org_id", "")},
-                timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-            return {"access_token": token, "token_type": "bearer",
-                    "user": {"username": client_user["username"], "role": client_user["role"],
-                             "user_type": "client", "org_id": client_user.get("org_id", ""),
-                             "org_name": client_user.get("org_name", "")}}
-    except HTTPException:
-        raise
-    except Exception:
-        pass
-
     auth_log.warning(f"LOGIN_FAILED user={req.username} ip={ip}")
     log_action(username=req.username, action="auth.login_failed",
                details={"reason": "invalid_credentials"}, ip_address=ip)
@@ -598,53 +526,34 @@ class ClientUserCreateRequest(BaseModel):
 
 @app.get("/api/admin/stats")
 def admin_platform_stats(user: dict = Depends(require_owner)):
-    return tenant_mgr.get_platform_stats()
+    return db_ops.get_platform_stats()
 
 
 @app.get("/api/admin/clients")
 def admin_list_clients(user: dict = Depends(require_owner)):
-    return {"clients": tenant_mgr.get_all_organizations()}
+    return {"clients": db_ops.get_all_organizations()}
 
 
 @app.post("/api/admin/clients")
 def admin_create_client(req: OrgCreateRequest, user: dict = Depends(require_owner)):
-    org = tenant_mgr.create_organization(req.name, req.contact_email, req.plan)
-    # Also create in database
-    try:
-        from models.database import SessionLocal, Organization, gen_id
-        db = SessionLocal()
-        org_id = org.get("id", org.get("org_id", gen_id()))
-        existing = db.query(Organization).filter(Organization.id == org_id).first()
-        if not existing:
-            db_org = Organization(
-                id=org_id, name=req.name,
-                slug=req.name.lower().replace(" ", "-")[:50],
-                plan=req.plan or "free",
-                alert_email=req.contact_email,
-            )
-            db.add(db_org)
-            db.commit()
-        db.close()
-    except Exception:
-        pass
-    return org
+    return db_ops.create_organization(req.name, req.contact_email, req.plan)
 
 
 @app.get("/api/admin/clients/{org_id}")
 def admin_get_client(org_id: str, user: dict = Depends(require_owner)):
-    org = tenant_mgr.get_organization(org_id)
+    org = db_ops.get_organization(org_id)
     if not org:
         raise HTTPException(404, "Client not found")
-    org["users"] = tenant_mgr.get_client_users(org_id)
-    org["invoices"] = tenant_mgr.get_invoices(org_id)
-    org["activity"] = tenant_mgr.get_activity_log(org_id, limit=20)
+    org["users"] = db_ops.get_client_users(org_id)
+    org["invoices"] = db_ops.get_invoices(org_id)
+    org["activity"] = db_ops.get_activity_log(org_id, limit=20)
     return org
 
 
 @app.put("/api/admin/clients/{org_id}")
 def admin_update_client(org_id: str, req: OrgUpdateRequest, user: dict = Depends(require_owner)):
     updates = {k: v for k, v in req.dict().items() if v is not None}
-    org = tenant_mgr.update_organization(org_id, updates)
+    org = db_ops.update_organization(org_id, updates)
     if not org:
         raise HTTPException(404, "Client not found")
     return org
@@ -652,79 +561,44 @@ def admin_update_client(org_id: str, req: OrgUpdateRequest, user: dict = Depends
 
 @app.delete("/api/admin/clients/{org_id}")
 def admin_delete_client(org_id: str, user: dict = Depends(require_owner)):
-    # Delete from database
-    try:
-        from models.database import SessionLocal, Organization, User as DBUser, CloudAccount, Scan, Finding, AuditLog
-        db = SessionLocal()
-        # Delete all related data
-        db.query(Finding).filter(Finding.org_id == org_id).delete()
-        db.query(AuditLog).filter(AuditLog.org_id == org_id).delete()
-        db.query(Scan).filter(Scan.org_id == org_id).delete()
-        db.query(CloudAccount).filter(CloudAccount.org_id == org_id).delete()
-        db.query(DBUser).filter(DBUser.org_id == org_id).delete()
-        db.query(Organization).filter(Organization.id == org_id).delete()
-        db.commit()
-        db.close()
-    except Exception:
-        pass
-    # Also delete from JSON tenant system
-    try:
-        tenant_mgr.delete_organization(org_id)
-    except Exception:
-        pass
+    db_ops.delete_organization(org_id)
     return {"status": "deleted"}
 
 
 @app.post("/api/admin/clients/{org_id}/users")
 def admin_create_client_user(org_id: str, req: ClientUserCreateRequest, user: dict = Depends(require_owner)):
-    result = tenant_mgr.create_client_user(org_id, req.username, req.password, req.email, req.role)
+    result = db_ops.create_client_user(org_id, req.username, req.password, req.email, req.role)
     if not result:
         raise HTTPException(404, "Organization not found")
     if isinstance(result, dict) and "error" in result:
         raise HTTPException(400, result["error"])
-    # Also create in database
-    try:
-        from models.database import SessionLocal, User as DBUser, gen_id
-        db = SessionLocal()
-        existing = db.query(DBUser).filter(DBUser.username == req.username).first()
-        if not existing:
-            db_user = DBUser(
-                id=gen_id(), username=req.username, email=req.email,
-                password_hash=pwd_context.hash(req.password),
-                role=req.role or "client_admin", user_type="client", org_id=org_id,
-            )
-            db.add(db_user)
-            db.commit()
-        db.close()
-    except Exception:
-        pass
     return result
 
 
 @app.get("/api/admin/clients/{org_id}/users")
 def admin_list_client_users(org_id: str, user: dict = Depends(require_owner)):
-    return {"users": tenant_mgr.get_client_users(org_id)}
+    return {"users": db_ops.get_client_users(org_id)}
 
 
 @app.delete("/api/admin/users/{user_id}")
 def admin_delete_client_user(user_id: str, user: dict = Depends(require_owner)):
-    tenant_mgr.delete_client_user(user_id)
+    db_ops.delete_client_user(user_id)
     return {"status": "deleted"}
 
 
 @app.get("/api/admin/activity")
 def admin_activity_log(user: dict = Depends(require_owner)):
-    return {"activity": tenant_mgr.get_activity_log(limit=100)}
+    return {"activity": db_ops.get_activity_log(limit=100)}
 
 
 @app.get("/api/admin/invoices")
 def admin_all_invoices(user: dict = Depends(require_owner)):
-    return {"invoices": tenant_mgr.get_invoices()}
+    return {"invoices": db_ops.get_invoices()}
 
 
 @app.get("/api/admin/plans")
 def admin_get_plans(user: dict = Depends(require_owner)):
-    return {"plans": tenant_mgr.PLANS}
+    return {"plans": db_ops.PLANS}
 
 
 # ── CLIENT: Self-service endpoints ──────────────────────────────
@@ -733,36 +607,11 @@ def client_profile(user: dict = Depends(get_current_user)):
     org_id = user.get("org_id")
     if not org_id:
         raise HTTPException(403, "Client access required")
-
-    # Try database first
-    try:
-        from models.database import SessionLocal, Organization, User as DBUser, CloudAccount
-        db = SessionLocal()
-        org = db.query(Organization).filter(Organization.id == org_id).first()
-        if org:
-            users = db.query(DBUser).filter(DBUser.org_id == org_id).all()
-            accounts = db.query(CloudAccount).filter(CloudAccount.org_id == org_id).all()
-            org_data = {
-                "id": org.id, "name": org.name, "plan": org.plan, "status": org.status,
-                "max_accounts": org.max_accounts, "max_scans_month": org.max_scans_month,
-                "total_resources": sum(a.total_resources for a in accounts),
-                "security_score": accounts[0].security_score if accounts else 0,
-                "cloud_accounts": [{"id": a.id, "name": a.name, "provider": a.provider,
-                                    "account_id": a.account_id} for a in accounts],
-            }
-            user_list = [{"username": u.username, "role": u.role, "email": u.email} for u in users]
-            db.close()
-            return {"organization": org_data, "plan": {"name": org.plan}, "users": user_list}
-        db.close()
-    except Exception:
-        pass
-
-    # Fallback to tenant system
-    org = tenant_mgr.get_organization(org_id)
+    org = db_ops.get_organization(org_id)
     if not org:
         raise HTTPException(404, "Organization not found")
-    plan_details = tenant_mgr.PLANS.get(org["plan"], {})
-    return {"organization": org, "plan": plan_details, "users": tenant_mgr.get_client_users(org_id)}
+    plan_details = db_ops.PLANS.get(org.get("plan", "free"), {})
+    return {"organization": org, "plan": plan_details, "users": db_ops.get_client_users(org_id)}
 
 
 @app.get("/api/client/invoices")
@@ -770,7 +619,7 @@ def client_invoices(user: dict = Depends(get_current_user)):
     org_id = user.get("org_id")
     if not org_id:
         raise HTTPException(403, "Client access required")
-    return {"invoices": tenant_mgr.get_invoices(org_id)}
+    return {"invoices": db_ops.get_invoices(org_id)}
 
 
 @app.get("/api/client/activity")
@@ -778,7 +627,7 @@ def client_activity(user: dict = Depends(get_current_user)):
     org_id = user.get("org_id")
     if not org_id:
         raise HTTPException(403, "Client access required")
-    return {"activity": tenant_mgr.get_activity_log(org_id, limit=50)}
+    return {"activity": db_ops.get_activity_log(org_id, limit=50)}
 
 
 # ── USER MANAGEMENT (RBAC) ──────────────────────────────────────
@@ -786,38 +635,26 @@ def client_activity(user: dict = Depends(get_current_user)):
 def list_users(user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(403, "Admin only")
-    return {"users": [
-        {"username": u["username"], "role": u["role"], "created": u.get("created")}
-        for u in _load_users()
-    ]}
+    return {"users": db_ops.get_all_users()}
 
 
 @app.post("/api/users")
-def create_user(req: UserCreateRequest, user: dict = Depends(get_current_user)):
+def create_user_endpoint(req: UserCreateRequest, user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(403, "Admin only")
-    users = _load_users()
-    if any(u["username"] == req.username for u in users):
-        raise HTTPException(400, "Username already exists")
-    users.append({
-        "username": req.username,
-        "hashed_password": pwd_context.hash(req.password),
-        "role": req.role,
-        "created": datetime.now().isoformat(),
-    })
-    _save_users(users)
-    return {"status": "ok", "user": {"username": req.username, "role": req.role}}
+    result = db_ops.create_user(req.username, req.password, req.role)
+    if isinstance(result, dict) and "error" in result:
+        raise HTTPException(400, result["error"])
+    return {"status": "ok", "user": result}
 
 
 @app.delete("/api/users/{username}")
-def delete_user(username: str, user: dict = Depends(get_current_user)):
+def delete_user_endpoint(username: str, user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(403, "Admin only")
     if username == user["username"]:
         raise HTTPException(400, "Cannot delete yourself")
-    users = _load_users()
-    users = [u for u in users if u["username"] != username]
-    _save_users(users)
+    db_ops.delete_user(username)
     return {"status": "ok"}
 
 
@@ -849,103 +686,48 @@ def get_provider_regions(provider_id: str, user: dict = Depends(get_current_user
 # ── ACCOUNTS (Multi-Cloud) ──────────────────────────────────────
 @app.get("/api/accounts")
 def list_accounts(user: dict = Depends(get_current_user)):
-    config = _load_config()
-    accounts = config.get("accounts", [])
-    enriched = []
-    seen = set()
+    """List all cloud accounts — DB is the single source of truth."""
+    org_id = user.get("org_id") if user.get("user_type") == "client" else None
+    db_accounts = db_ops.get_cloud_accounts(org_id)
 
-    for acct in accounts:
-        provider = acct.get("provider", "aws")
-        name = acct["name"]
-        has_data = (ACCOUNT_DATA_DIR / provider / name).exists()
-        # Legacy check
-        if not has_data and provider == "aws":
-            has_data = (ACCOUNT_DATA_DIR / name).exists()
-        regions = _get_regions_for_account(name, provider) if has_data else []
-        enriched.append({**acct, "provider": provider, "has_data": has_data, "regions": regions})
-        seen.add(f"{provider}:{name}")
-
-    # Auto-detect accounts with data not in config
+    # Also check for file-based scan data (legacy)
+    seen = {a["name"] for a in db_accounts}
     for item in _get_account_dirs():
-        key = f"{item['provider']}:{item['name']}"
-        if key not in seen:
+        if item["name"] not in seen:
             regions = _get_regions_for_account(item["name"], item["provider"])
-            enriched.append({
+            db_accounts.append({
                 "id": "auto-detected", "name": item["name"],
-                "provider": item["provider"],
-                "default": len(enriched) == 0, "has_data": True, "regions": regions,
+                "provider": item["provider"], "default": False,
+                "has_data": True, "regions": regions,
+                "has_credentials": False, "security_score": 0,
+                "total_resources": 0, "last_scan": None,
             })
 
-    # Also include DB-based accounts (V2)
-    try:
-        from models.database import SessionLocal, CloudAccount, Scan
-        db = SessionLocal()
-        org_id = user.get("org_id")
-        query = db.query(CloudAccount)
-        if org_id and user.get("user_type") == "client":
-            query = query.filter(CloudAccount.org_id == org_id)
-        db_accounts = query.all()
-        for acc in db_accounts:
-            key = f"{acc.provider}:{acc.name}"
-            if key not in seen:
-                latest = db.query(Scan).filter(Scan.account_id == acc.id, Scan.status == "completed").order_by(Scan.completed_at.desc()).first()
-                enriched.append({
-                    "id": acc.account_id or acc.id, "name": acc.name,
-                    "provider": acc.provider, "default": len(enriched) == 0,
-                    "has_data": latest is not None,
-                    "regions": [], "db_account_id": acc.id,
-                    "has_credentials": bool(acc.access_key and acc.secret_key),
-                    "security_score": acc.security_score,
-                    "total_resources": acc.total_resources,
-                    "last_scan": latest.completed_at.isoformat() if latest and latest.completed_at else None,
-                })
-                seen.add(key)
-        db.close()
-    except Exception:
-        pass
-
-    return {"accounts": enriched}
+    return {"accounts": db_accounts}
 
 
 @app.post("/api/accounts")
 def add_account(account: AccountIn, user: dict = Depends(get_current_user)):
-    config = _load_config()
-    for existing in config.get("accounts", []):
-        if existing["id"] == account.id and existing.get("provider", "aws") == account.provider:
-            raise HTTPException(400, "Account with this ID already exists for this provider")
-    config.setdefault("accounts", []).append(account.dict())
-    _save_config(config)
-    return {"status": "ok", "account": account.dict()}
+    """Add cloud account — saves to database."""
+    org_id = user.get("org_id", "cloudsentinel")
+    result = db_ops.add_cloud_account(
+        name=account.name, provider=account.provider,
+        account_id=account.id, org_id=org_id,
+    )
+    return {"status": "ok", "account": result}
 
 
 @app.delete("/api/accounts/{account_id}")
 def remove_account(account_id: str, provider: str = "aws", user: dict = Depends(get_current_user)):
-    config = _load_config()
-    removed_name = None
-    removed_provider = provider
-    for acct in config.get("accounts", []):
-        if acct["id"] == account_id:
-            removed_name = acct["name"]
-            removed_provider = acct.get("provider", "aws")
-            break
+    """Remove cloud account from DB and delete scan data files."""
+    db_ops.remove_cloud_account(account_id)
 
-    config["accounts"] = [a for a in config.get("accounts", []) if a["id"] != account_id]
-    _save_config(config)
+    # Also clean up scan data files
+    for name_dir in [ACCOUNT_DATA_DIR / provider / account_id, ACCOUNT_DATA_DIR / account_id]:
+        if name_dir.exists():
+            shutil.rmtree(name_dir)
 
-    data_deleted = False
-    if removed_name:
-        # New path: account-data/{provider}/{name}
-        acct_data_dir = ACCOUNT_DATA_DIR / removed_provider / removed_name
-        if acct_data_dir.exists():
-            shutil.rmtree(acct_data_dir)
-            data_deleted = True
-        # Legacy path: account-data/{name}
-        legacy_dir = ACCOUNT_DATA_DIR / removed_name
-        if legacy_dir.exists():
-            shutil.rmtree(legacy_dir)
-            data_deleted = True
-
-    return {"status": "ok", "account_removed": removed_name, "provider": removed_provider, "data_deleted": data_deleted}
+    return {"status": "ok", "account_removed": account_id}
 
 
 # ── CIDRs ────────────────────────────────────────────────────────

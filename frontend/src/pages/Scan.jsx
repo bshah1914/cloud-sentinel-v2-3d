@@ -107,9 +107,50 @@ export default function Scan() {
         }
       }
 
-      // Fallback: old scan method
+      // No DB account with credentials — save credentials and create account, then scan
       const missing = credentialFields.filter((f) => f.required && !credentials[f.key]);
       if (missing.length > 0) { alert(`Please fill in: ${missing.map((f) => f.label).join(', ')}`); setStarting(false); return; }
+
+      // Save credentials to DB by creating/updating V2 account
+      const accessKey = credentials.access_key_id || credentials.access_key;
+      const secretKey = credentials.secret_access_key || credentials.secret_key;
+      if (accessKey && secretKey) {
+        const createRes = await fetch(`${base}/v2/accounts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            name: selectedAccount, provider: selectedProvider,
+            account_id: selectedAccount, access_key: accessKey,
+            secret_key: secretKey, region: region || 'us-east-1',
+          }),
+        });
+        const createData = await createRes.json();
+        if (createRes.ok && createData.id) {
+          // Now run V2 scan with the new account
+          const scanRes = await fetch(`${base}/v2/scans`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ account_id: createData.id, scan_type: 'full' }),
+          });
+          const scanData = await scanRes.json();
+          if (scanRes.ok) {
+            const newJob = { id: scanData.scan_id, provider: selectedProvider, status: 'running', account: selectedAccount, started: new Date().toISOString(), log: ['V2 scan started — credentials saved, scanning live account...'], progress: 0 };
+            setJobs((prev) => [newJob, ...prev]);
+            const pollV2 = setInterval(async () => {
+              try {
+                const sRes = await fetch(`${base}/v2/scans/${scanData.scan_id}`, { headers: { Authorization: `Bearer ${token}` } });
+                const sData = await sRes.json();
+                setJobs(prev => prev.map(j => j.id === scanData.scan_id ? { ...j, status: sData.status, findings: sData.findings_count, resources: sData.resources_found, score: sData.security_score, error: sData.error_message, progress: sData.status === 'completed' ? 100 : 50 } : j));
+                if (sData.status !== 'running') { clearInterval(pollV2); if (refreshAccounts) refreshAccounts(); }
+              } catch { clearInterval(pollV2); }
+            }, 5000);
+            setStarting(false);
+            return;
+          }
+        }
+      }
+
+      // Last resort: old scan method (no DB)
       const res = await startScan({
         accountName: selectedAccount, provider: selectedProvider, credentials, region,
         awsAccessKeyId: selectedProvider === 'aws' ? credentials.access_key_id : undefined,
