@@ -328,7 +328,10 @@ def run_scan(scan_id, account_id):
         scan.medium_count = medium
         scan.low_count = low
         scan.security_score = score
-        scan.duration_seconds = int((scan.completed_at - scan.started_at).total_seconds())
+        try:
+            scan.duration_seconds = int((scan.completed_at - scan.started_at).total_seconds())
+        except TypeError:
+            scan.duration_seconds = 0
         scan.results = all_results
 
         # Store findings in DB

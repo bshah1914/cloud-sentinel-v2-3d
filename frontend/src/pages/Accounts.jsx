@@ -17,7 +17,7 @@ export default function Accounts() {
   const [loading, setLoading] = useState(true);
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [showAddCIDR, setShowAddCIDR] = useState(false);
-  const [newAccount, setNewAccount] = useState({ id: '', name: '', provider: 'aws', default: false });
+  const [newAccount, setNewAccount] = useState({ id: '', name: '', provider: 'aws', default: false, access_key: '', secret_key: '', role_arn: '' });
   const [newCIDR, setNewCIDR] = useState({ cidr: '', name: '' });
   const [error, setError] = useState('');
 
@@ -41,8 +41,23 @@ export default function Accounts() {
   const handleAddAccount = async (e) => {
     e.preventDefault();
     try {
-      await addAccount(newAccount);
-      setNewAccount({ id: '', name: '', provider: 'aws', default: false });
+      // Save to legacy system (config.json)
+      await addAccount({ id: newAccount.id, name: newAccount.name, provider: newAccount.provider, default: newAccount.default });
+      // Also save to V2 database with credentials
+      const { getBase } = await import('../api');
+      const base = getBase();
+      const token = localStorage.getItem('cm_token');
+      await fetch(`${base}/v2/accounts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          name: newAccount.name, provider: newAccount.provider,
+          account_id: newAccount.id,
+          access_key: newAccount.access_key, secret_key: newAccount.secret_key,
+          role_arn: newAccount.role_arn || null, region: 'us-east-1',
+        }),
+      });
+      setNewAccount({ id: '', name: '', provider: 'aws', default: false, access_key: '', secret_key: '', role_arn: '' });
       setShowAddAccount(false);
       await load();
       await refreshAccounts();
@@ -110,7 +125,7 @@ export default function Accounts() {
           <motion.form initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }} onSubmit={handleAddAccount}
             className="bg-surface-light/80 border border-border/30 rounded-2xl p-5 space-y-4 overflow-hidden">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="block text-[10px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Provider</label>
                 <select value={newAccount.provider} onChange={(e) => setNewAccount({ ...newAccount, provider: e.target.value })}
@@ -132,14 +147,36 @@ export default function Accounts() {
                   placeholder="production" required
                   className="w-full bg-surface/60 border border-border/50 rounded-xl px-3 py-2.5 text-sm text-text placeholder:text-text-muted/40 focus:outline-none focus:border-primary/40 transition-all" />
               </div>
-              <div className="flex items-end gap-3">
-                <label className="flex items-center gap-2 text-xs cursor-pointer">
-                  <input type="checkbox" checked={newAccount.default} onChange={(e) => setNewAccount({ ...newAccount, default: e.target.checked })}
-                    className="w-4 h-4 rounded accent-primary" />
-                  Default
-                </label>
-                <button type="submit" className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 rounded-xl text-xs font-medium transition-colors">Save</button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3">
+              <div>
+                <label className="block text-[10px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Access Key ID</label>
+                <input type="text" value={newAccount.access_key} onChange={(e) => setNewAccount({ ...newAccount, access_key: e.target.value })}
+                  placeholder="AKIAIOSFODNN7EXAMPLE" required
+                  className="w-full bg-surface/60 border border-border/50 rounded-xl px-3 py-2.5 text-sm text-text placeholder:text-text-muted/40 focus:outline-none focus:border-primary/40 transition-all font-mono" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Secret Access Key</label>
+                <input type="password" value={newAccount.secret_key} onChange={(e) => setNewAccount({ ...newAccount, secret_key: e.target.value })}
+                  placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLE" required
+                  className="w-full bg-surface/60 border border-border/50 rounded-xl px-3 py-2.5 text-sm text-text placeholder:text-text-muted/40 focus:outline-none focus:border-primary/40 transition-all font-mono" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Role ARN <span className="text-text-muted/50">(optional)</span></label>
+                <input type="text" value={newAccount.role_arn} onChange={(e) => setNewAccount({ ...newAccount, role_arn: e.target.value })}
+                  placeholder="arn:aws:iam::123456789012:role/CloudSentinel"
+                  className="w-full bg-surface/60 border border-border/50 rounded-xl px-3 py-2.5 text-sm text-text placeholder:text-text-muted/40 focus:outline-none focus:border-primary/40 transition-all font-mono" />
+              </div>
+            </div>
+            <div className="flex items-center gap-3 mt-3">
+              <label className="flex items-center gap-2 text-xs cursor-pointer">
+                <input type="checkbox" checked={newAccount.default} onChange={(e) => setNewAccount({ ...newAccount, default: e.target.checked })}
+                  className="w-4 h-4 rounded accent-primary" />
+                Default Account
+              </label>
+              <div className="ml-auto flex gap-2">
                 <button type="button" onClick={() => setShowAddAccount(false)} className="px-4 py-2.5 bg-surface-lighter/50 hover:bg-surface-lighter rounded-xl text-xs transition-colors">Cancel</button>
+                <button type="submit" className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 rounded-xl text-xs font-medium transition-colors">Connect Account</button>
               </div>
             </div>
           </motion.form>

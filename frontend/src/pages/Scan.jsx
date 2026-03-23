@@ -65,10 +65,51 @@ export default function Scan() {
 
   const handleStartScan = async () => {
     if (!selectedAccount) return;
-    const missing = credentialFields.filter((f) => f.required && !credentials[f.key]);
-    if (missing.length > 0) { alert(`Please fill in: ${missing.map((f) => f.label).join(', ')}`); return; }
     setStarting(true);
     try {
+      // Try V2 scan first (uses DB-stored credentials)
+      const { getBase } = await import('../api');
+      const base = getBase();
+      const token = localStorage.getItem('cm_token');
+
+      // Get V2 accounts to find the DB account ID
+      const v2Res = await fetch(`${base}/v2/accounts`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const v2Data = await v2Res.json();
+      const dbAccount = (v2Data.accounts || []).find(a => a.name === selectedAccount && a.has_credentials);
+
+      if (dbAccount) {
+        // Use V2 scanner with DB credentials
+        const scanRes = await fetch(`${base}/v2/scans`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ account_id: dbAccount.id, scan_type: 'full' }),
+        });
+        const scanData = await scanRes.json();
+        if (scanRes.ok) {
+          const newJob = { id: scanData.scan_id, provider: selectedProvider, status: 'running', account: selectedAccount, started: new Date().toISOString(), log: ['V2 scan started — scanning live AWS account...'], progress: 0 };
+          setJobs((prev) => [newJob, ...prev]);
+          // Poll V2 scan status
+          const pollV2 = setInterval(async () => {
+            try {
+              const sRes = await fetch(`${base}/v2/scans/${scanData.scan_id}`, { headers: { Authorization: `Bearer ${token}` } });
+              const sData = await sRes.json();
+              setJobs(prev => prev.map(j => j.id === scanData.scan_id ? { ...j, status: sData.status, findings: sData.findings_count, resources: sData.resources_found, score: sData.security_score, progress: sData.status === 'completed' ? 100 : 50 } : j));
+              if (sData.status !== 'running') {
+                clearInterval(pollV2);
+                if (refreshAccounts) refreshAccounts();
+              }
+            } catch { clearInterval(pollV2); }
+          }, 5000);
+          setStarting(false);
+          return;
+        }
+      }
+
+      // Fallback: old scan method
+      const missing = credentialFields.filter((f) => f.required && !credentials[f.key]);
+      if (missing.length > 0) { alert(`Please fill in: ${missing.map((f) => f.label).join(', ')}`); setStarting(false); return; }
       const res = await startScan({
         accountName: selectedAccount, provider: selectedProvider, credentials, region,
         awsAccessKeyId: selectedProvider === 'aws' ? credentials.access_key_id : undefined,
